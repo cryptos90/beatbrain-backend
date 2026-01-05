@@ -1,0 +1,12 @@
+[
+  { "id": "rock_1", "name": "Back In Black", "artist": "AC/DC" },
+  { "id": "rock_2", "name": "Sweet Child O' Mine", "artist": "Guns N' Roses" },
+  { "id": "rock_3", "name": "Smells Like Teen Spirit", "artist": "Nirvana" },
+  { "id": "rock_4", "name": "Highway to Hell", "artist": "AC/DC" },
+  { "id": "rock_5", "name": "Bohemian Rhapsody", "artist": "Queen" },
+  { "id": "rock_6", "name": "Enter Sandman", "artist": "Metallica" },
+  { "id": "rock_7", "name": "Paint It Black", "artist": "The Rolling Stones" },
+  { "id": "rock_8", "name": "Seven Nation Army", "artist": "The White Stripes" },
+  { "id": "rock_9", "name": "Livin' on a Prayer", "artist": "Bon Jovi" },
+  { "id": "rock_10", "name": "Paranoid", "artist": "Black Sabbath" }
+]

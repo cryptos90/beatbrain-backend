@@ -1,0 +1,12 @@
+[
+  { "id": "90s_1", "name": "Smells Like Teen Spirit", "artist": "Nirvana" },
+  { "id": "90s_2", "name": "Wonderwall", "artist": "Oasis" },
+  { "id": "90s_3", "name": "No Scrubs", "artist": "TLC" },
+  { "id": "90s_4", "name": "Baby One More Time", "artist": "Britney Spears" },
+  { "id": "90s_5", "name": "California Love", "artist": "2Pac" },
+  { "id": "90s_6", "name": "Losing My Religion", "artist": "R.E.M." },
+  { "id": "90s_7", "name": "Creep", "artist": "Radiohead" },
+  { "id": "90s_8", "name": "Ice Ice Baby", "artist": "Vanilla Ice" },
+  { "id": "90s_9", "name": "Torn", "artist": "Natalie Imbruglia" },
+  { "id": "90s_10", "name": "Gangsta's Paradise", "artist": "Coolio" }
+]
