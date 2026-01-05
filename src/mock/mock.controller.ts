@@ -5,9 +5,9 @@ import * as path from 'path';
 @Controller('mock')
 export class MockController {
   private playlistToFile: Record<string, string> = {
-    mock_01: 'mock_songs_80.json',
-    mock_02: 'mock_songs_90.json',
-    mock_03: 'mock_songs_70.json',
+    mock_01: 'mock_songs_80s.json',
+    mock_02: 'mock_songs_90s.json',
+    mock_03: 'mock_songs_70s.json',
     mock_04: 'mock_songs_hip-hop.json',
     mock_05: 'mock_songs_rock.json',
   };

@@ -1,12 +1,12 @@
 [
-  { "id": "hiphop_1", "name": "Lose Yourself", "artist": "Eminem" },
-  { "id": "hiphop_2", "name": "Juicy", "artist": "The Notorious B.I.G." },
-  { "id": "hiphop_3", "name": "Still D.R.E.", "artist": "Dr. Dre" },
-  { "id": "hiphop_4", "name": "N.Y. State of Mind", "artist": "Nas" },
-  { "id": "hiphop_5", "name": "HUMBLE.", "artist": "Kendrick Lamar" },
-  { "id": "hiphop_6", "name": "Ms. Jackson", "artist": "OutKast" },
-  { "id": "hiphop_7", "name": "In Da Club", "artist": "50 Cent" },
-  { "id": "hiphop_8", "name": "Shook Ones, Pt. II", "artist": "Mobb Deep" },
-  { "id": "hiphop_9", "name": "God's Plan", "artist": "Drake" },
-  { "id": "hiphop_10", "name": "Straight Outta Compton", "artist": "N.W.A" }
+  { "id": "hiphop_1", "name": "Lose Yourself", "artist": "Eminem", "year": 2002, "album": "8 Mile Soundtrack", "solo": true },
+  { "id": "hiphop_2", "name": "Juicy", "artist": "The Notorious B.I.G.", "year": 1994, "album": "Ready to Die", "solo": true },
+  { "id": "hiphop_3", "name": "Still D.R.E.", "artist": "Dr. Dre", "year": 1999, "album": "2001", "solo": true },
+  { "id": "hiphop_4", "name": "N.Y. State of Mind", "artist": "Nas", "year": 1994, "album": "Illmatic", "solo": true },
+  { "id": "hiphop_5", "name": "HUMBLE.", "artist": "Kendrick Lamar", "year": 2017, "album": "DAMN.", "solo": true },
+  { "id": "hiphop_6", "name": "Ms. Jackson", "artist": "OutKast", "year": 2000, "album": "Stankonia", "solo": false },
+  { "id": "hiphop_7", "name": "In Da Club", "artist": "50 Cent", "year": 2003, "album": "Get Rich or Die Tryin'", "solo": true },
+  { "id": "hiphop_8", "name": "Shook Ones, Pt. II", "artist": "Mobb Deep", "year": 1995, "album": "The Infamous", "solo": false },
+  { "id": "hiphop_9", "name": "God's Plan", "artist": "Drake", "year": 2018, "album": "Scorpion", "solo": true },
+  { "id": "hiphop_10", "name": "Straight Outta Compton", "artist": "N.W.A", "year": 1988, "album": "Straight Outta Compton", "solo": false }
 ]
