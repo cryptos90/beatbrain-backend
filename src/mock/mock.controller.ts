@@ -1,38 +1,39 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, NotFoundException } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Controller('mock')
 export class MockController {
+  private playlistToFile: Record<string, string> = {
+    mock_01: 'mock_songs_80.json',
+    mock_02: 'mock_songs_90.json',
+    mock_03: 'mock_songs_70.json',
+    mock_04: 'mock_songs_hip-hop.json',
+    mock_05: 'mock_songs_rock.json',
+  };
+
   @Get('playlists/:id/tracks')
   getMockPlaylistTracks(@Param('id') id: string) {
-    return {
-      playlistId: id,
-      tracks: [
-        {
-          id: 'track_1',
-          name: 'Midnight Echoes',
-          artist: 'Neon Avenue',
-          spotifyUri: 'spotify:track:1111111111111111111111',
-          // später echte URL/Spotify Remote
-        },
-        {
-          id: 'track_2',
-          name: 'Ocean Lights',
-          artist: 'Silver Static',
-          spotifyUri: 'spotify:track:2222222222222222222222',
-        },
-        {
-          id: 'track_3',
-          name: 'Paper Planes',
-          artist: 'Cloudrunner',
-          spotifyUri: 'spotify:track:3333333333333333333333',
-        },
-        {
-          id: 'track_4',
-          name: 'Night Drive',
-          artist: 'Glass Skyline',
-          spotifyUri: 'spotify:track:4444444444444444444444',
-        },
-      ],
-    };
+    const fileName = this.playlistToFile[id];
+    if (!fileName) {
+      throw new NotFoundException(`Unknown mock playlist id: ${id}`);
+    }
+
+    // ✅ Wenn deine JSONs in src/mock/data liegen:
+    const filePath = path.join(__dirname, 'data', fileName);
+
+    // ❗ Falls du die JSONs NICHT verschoben hast und sie direkt in src/mock liegen,
+    // dann nimm stattdessen:
+    // const filePath = path.join(__dirname, fileName);
+
+    if (!fs.existsSync(filePath)) {
+      throw new NotFoundException(`Mock songs file not found: ${fileName}`);
+    }
+
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const tracks = JSON.parse(raw);
+
+    // Erwartet: Array von { id, name, artist, spotifyUri }
+    return { playlistId: id, tracks };
   }
 }

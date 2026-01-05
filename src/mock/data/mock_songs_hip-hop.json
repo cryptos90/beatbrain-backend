@@ -1,0 +1,12 @@
+[
+  { "id": "hiphop_1", "name": "Lose Yourself", "artist": "Eminem" },
+  { "id": "hiphop_2", "name": "Juicy", "artist": "The Notorious B.I.G." },
+  { "id": "hiphop_3", "name": "Still D.R.E.", "artist": "Dr. Dre" },
+  { "id": "hiphop_4", "name": "N.Y. State of Mind", "artist": "Nas" },
+  { "id": "hiphop_5", "name": "HUMBLE.", "artist": "Kendrick Lamar" },
+  { "id": "hiphop_6", "name": "Ms. Jackson", "artist": "OutKast" },
+  { "id": "hiphop_7", "name": "In Da Club", "artist": "50 Cent" },
+  { "id": "hiphop_8", "name": "Shook Ones, Pt. II", "artist": "Mobb Deep" },
+  { "id": "hiphop_9", "name": "God's Plan", "artist": "Drake" },
+  { "id": "hiphop_10", "name": "Straight Outta Compton", "artist": "N.W.A" }
+]

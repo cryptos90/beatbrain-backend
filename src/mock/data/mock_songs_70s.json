@@ -1,0 +1,12 @@
+[
+  { "id": "70s_1", "name": "Stayin' Alive", "artist": "Bee Gees" },
+  { "id": "70s_2", "name": "Bohemian Rhapsody", "artist": "Queen" },
+  { "id": "70s_3", "name": "Superstition", "artist": "Stevie Wonder" },
+  { "id": "70s_4", "name": "Hotel California", "artist": "Eagles" },
+  { "id": "70s_5", "name": "Dancing Queen", "artist": "ABBA" },
+  { "id": "70s_6", "name": "Imagine", "artist": "John Lennon" },
+  { "id": "70s_7", "name": "Le Freak", "artist": "Chic" },
+  { "id": "70s_8", "name": "September", "artist": "Earth, Wind & Fire" },
+  { "id": "70s_9", "name": "American Pie", "artist": "Don McLean" },
+  { "id": "70s_10", "name": "Let It Be", "artist": "The Beatles" }
+]
