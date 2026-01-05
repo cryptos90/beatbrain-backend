@@ -15,25 +15,26 @@ export class MockController {
   @Get('playlists/:id/tracks')
   getMockPlaylistTracks(@Param('id') id: string) {
     const fileName = this.playlistToFile[id];
+
     if (!fileName) {
-      throw new NotFoundException(`Unknown mock playlist id: ${id}`);
+      throw new NotFoundException('Playlist not found');
     }
 
-    // ✅ Wenn deine JSONs in src/mock/data liegen:
-    const filePath = path.join(__dirname, 'data', fileName);
-
-    // ❗ Falls du die JSONs NICHT verschoben hast und sie direkt in src/mock liegen,
-    // dann nimm stattdessen:
-    // const filePath = path.join(__dirname, fileName);
+    const filePath = path.join(
+      process.cwd(),
+      'src',
+      'mock',
+      'data',
+      fileName,
+    );
 
     if (!fs.existsSync(filePath)) {
-      throw new NotFoundException(`Mock songs file not found: ${fileName}`);
+      throw new NotFoundException('Mock data file not found');
     }
 
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const tracks = JSON.parse(raw);
+    const fileContent = fs.readFileSync(filePath, 'utf-8');
+    const tracks = JSON.parse(fileContent);
 
-    // Erwartet: Array von { id, name, artist, spotifyUri }
-    return { playlistId: id, tracks };
+    return { tracks };
   }
 }
