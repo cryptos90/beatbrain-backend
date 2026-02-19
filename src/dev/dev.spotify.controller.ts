@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Post } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service';
+import { SpotifyUnauthorizedError, spotifyFetch } from '../spotify/spotifyHttp';
 
 const DEFAULT_TEST_PLAYLIST_ID = '37i9dQZF1DXcBWIGoYBM5M';
 
@@ -21,6 +22,8 @@ type SpotifyFetchResult = {
 
 @Controller('dev/spotify')
 export class DevSpotifyController {
+  private readonly logger = new Logger(DevSpotifyController.name);
+
   constructor(private readonly authService: AuthService) {}
 
   private isDevMode() {
@@ -60,12 +63,35 @@ export class DevSpotifyController {
       ? pathOrUrl
       : `https://api.spotify.com/v1${pathOrUrl}`;
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
+    let response: Response;
+    try {
+      response = await spotifyFetch(
+        url,
+        {
+          method: 'GET',
+        },
+        {
+          accessToken,
+          endpointPath: pathOrUrl,
+          logger: this.logger,
+        },
+      );
+    } catch (error) {
+      if (error instanceof SpotifyUnauthorizedError && retryAfterUnauthorized) {
+        try {
+          await this.authService.forceRefreshAfterUnauthorized();
+        } catch {
+          return { ok: false, status: 401, reason: 'no/expired token' };
+        }
+        return this.spotifyRequest(pathOrUrl, false);
+      }
+
+      if (error instanceof SpotifyUnauthorizedError) {
+        return { ok: false, status: error.status, reason: 'no/expired token' };
+      }
+
+      return { ok: false, status: 500, reason: 'spotify_request_failed' };
+    }
 
     if ((response.status === 401 || response.status === 403) && retryAfterUnauthorized) {
       try {

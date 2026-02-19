@@ -14,10 +14,10 @@ export class SpotifyController {
     @Headers('authorization') authorizationHeader: string | undefined,
     @Body() body: { playlistIds?: string[] },
   ) {
-    this.authService.verifyHostJwtOrThrow(authorizationHeader);
+    const jwt = this.authService.verifyHostJwtOrThrow(authorizationHeader);
     const playlistIds = body.playlistIds ?? [];
     return {
-      playlists: await this.spotifyService.resolvePlaylists(playlistIds),
+      playlists: await this.spotifyService.resolvePlaylists(jwt.sub, playlistIds),
     };
   }
 
