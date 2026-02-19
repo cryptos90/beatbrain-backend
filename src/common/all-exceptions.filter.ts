@@ -20,12 +20,26 @@ export class AllExceptionsFilter implements ExceptionFilter {
       : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const payload = isHttpException ? exception.getResponse() : undefined;
+    const payloadObject =
+      typeof payload === 'object' && payload !== null
+        ? (payload as Record<string, any>)
+        : undefined;
     const message =
       typeof payload === 'string'
         ? payload
-        : (payload as any)?.message ??
+        : payloadObject?.message ??
           (exception as any)?.message ??
           'Internal server error';
+
+    const errorDetails: Record<string, any> = {};
+    if (payloadObject) {
+      for (const [key, value] of Object.entries(payloadObject)) {
+        if (key === 'message' || key === 'statusCode') {
+          continue;
+        }
+        errorDetails[key] = value;
+      }
+    }
 
     const isProd = process.env.NODE_ENV === 'production';
 
@@ -34,6 +48,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       error: {
         status,
         message,
+        ...errorDetails,
       },
       path: request.url,
       timestamp: new Date().toISOString(),

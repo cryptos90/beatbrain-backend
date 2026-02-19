@@ -4,6 +4,50 @@ import { optionalEnv, requiredEnv } from './config/env';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { Logger } from '@nestjs/common';
 
+const MAX_PORT_ATTEMPTS = 3;
+
+function isAddrInUseError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as any).code === 'EADDRINUSE'
+  );
+}
+
+async function listenWithFallback(
+  app: Awaited<ReturnType<typeof NestFactory.create>>,
+  logger: Logger,
+  preferredPort: number,
+) {
+  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt += 1) {
+    const candidatePort = preferredPort + attempt;
+    try {
+      await app.listen(candidatePort, '0.0.0.0');
+      if (attempt > 0) {
+        logger.warn(
+          `Backend started on fallback port ${candidatePort} (preferred ${preferredPort} was unavailable).`,
+        );
+      }
+      return candidatePort;
+    } catch (error) {
+      if (isAddrInUseError(error)) {
+        logger.error(
+          `Port ${candidatePort} is already in use. Stop the other process or set PORT=${candidatePort + 1}.`,
+        );
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error(
+    `Could not bind backend to any port in range ${preferredPort}-${
+      preferredPort + MAX_PORT_ATTEMPTS - 1
+    }.`,
+  );
+}
+
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const app = await NestFactory.create(AppModule);
@@ -61,16 +105,23 @@ async function bootstrap() {
     credentials: false,
   });
 
-  const port = Number(process.env.PORT ?? 3000);
-  await app.listen(port, '0.0.0.0');
+  const preferredPort = Number(process.env.PORT ?? 3000);
+  const boundPort = await listenWithFallback(app, logger, preferredPort);
 
   if (isDev) {
     const mobileRedirect = requiredEnv('SPOTIFY_REDIRECT_URI');
     const webRedirect = optionalEnv('SPOTIFY_REDIRECT_URI_WEB') ?? '<not-set>';
+    logger.log(`Backend listening on port ${boundPort}`);
     logger.log(`CORS ENABLED ORIGINS: ${allowedOrigins.join(', ') || '<none>'}`);
     logger.log(`Spotify redirect (mobile): ${mobileRedirect}`);
     logger.log(`Spotify redirect (web): ${webRedirect}`);
     logger.log(`HOST_WEB_ORIGIN: ${hostWebOrigin ?? '<not-set>'}`);
   }
 }
-bootstrap();
+bootstrap().catch((error) => {
+  const logger = new Logger('Bootstrap');
+  logger.error(
+    `Backend startup failed: ${(error as Error)?.message ?? 'Unknown error'}`,
+  );
+  process.exit(1);
+});
