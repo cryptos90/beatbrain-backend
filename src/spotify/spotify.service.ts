@@ -43,6 +43,26 @@ export type MinimalTrack = {
   popularity: number;
 };
 
+export type PlaylistTrackPageMinimalStats = {
+  itemsCount: number;
+  nullTrackCount: number;
+  localTrackCount: number;
+  missingIdOrUriCount: number;
+};
+
+export type PlaylistTrackPageMinimalResult = {
+  total: number;
+  next: string | null;
+  mappedTracks: MinimalTrack[];
+  stats: PlaylistTrackPageMinimalStats;
+};
+
+export type SpotifyPlaylistMeta = {
+  id: string;
+  name: string;
+  coverUrl: string;
+};
+
 type PlaylistTracksPage = {
   items: SpotifyPlaylistTrackItem[];
   next: string | null;
@@ -60,8 +80,6 @@ type PlaylistTracksMinimalPage = {
       id?: string;
       uri?: string;
       name?: string;
-      popularity?: number;
-      explicit?: boolean;
       artists?: { name?: string }[];
       album?: {
         name?: string;
@@ -71,6 +89,7 @@ type PlaylistTracksMinimalPage = {
     };
   }>;
   total?: number;
+  next?: string | null;
 };
 
 type SpotifyDevicesResponse = {
@@ -127,10 +146,16 @@ export class SpotifyService {
   }
 
   private extractReleaseYear(rawDate: string | undefined) {
-    if (!rawDate) {
+    const value = String(rawDate ?? '').trim();
+    if (!value) {
       return '';
     }
-    return rawDate.split('-')[0] ?? '';
+
+    const maybeYear = value.slice(0, 4);
+    if (!/^\d{4}$/.test(maybeYear)) {
+      return '';
+    }
+    return maybeYear;
   }
 
   private async spotifyApiRequest(
@@ -268,13 +293,27 @@ export class SpotifyService {
   }
 
   async getPlaylist(playlistId: string) {
-    const playlist = await this.spotifyApiFetch<SpotifyPlaylistSummary>(
-      `/playlists/${encodeURIComponent(playlistId)}?fields=id,name,images(url)`,
-    );
+    const playlist = await this.getPlaylistMeta(playlistId);
     return {
       id: playlist.id,
       title: playlist.name,
-      imageUrl: playlist.images?.[0]?.url ?? '',
+      imageUrl: playlist.coverUrl,
+    };
+  }
+
+  async getPlaylistMeta(playlistId: string): Promise<SpotifyPlaylistMeta> {
+    const normalizedPlaylistId = (playlistId ?? '').trim();
+    if (!normalizedPlaylistId) {
+      throw new BadRequestException('Missing playlistId');
+    }
+
+    const playlist = await this.spotifyApiFetch<SpotifyPlaylistSummary>(
+      `/playlists/${encodeURIComponent(normalizedPlaylistId)}?fields=id,name,images(url)`,
+    );
+    return {
+      id: String(playlist.id ?? normalizedPlaylistId),
+      name: String(playlist.name ?? ''),
+      coverUrl: String(playlist.images?.[0]?.url ?? ''),
     };
   }
 
@@ -334,35 +373,73 @@ export class SpotifyService {
     return Number(payload?.tracks?.total ?? 0);
   }
 
-  async getPlaylistTrackPageMinimal(playlistId: string, offset: number, limit: number) {
+  async getPlaylistTrackPageMinimal(
+    playlistId: string,
+    offset: number,
+    limit: number,
+  ): Promise<PlaylistTrackPageMinimalResult> {
     const normalizedPlaylistId = (playlistId ?? '').trim();
     if (!normalizedPlaylistId) {
       throw new BadRequestException('Missing playlistId');
     }
 
     const safeOffset = Math.max(0, Math.floor(offset));
-    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
 
     const page = await this.spotifyApiFetch<PlaylistTracksMinimalPage>(
       `/playlists/${encodeURIComponent(
         normalizedPlaylistId,
-      )}/tracks?limit=${safeLimit}&offset=${safeOffset}&fields=items(track(id,name,uri,artists(name),album(name,release_date,images(url)),explicit,popularity)),total`,
+      )}/tracks?limit=${safeLimit}&offset=${safeOffset}&market=from_token&fields=items(track(id,uri,name,artists(name),album(name,release_date,images(url)))),total,next`,
     );
 
-    return (page.items ?? [])
-      .map((item) => item.track)
-      .filter((track): track is NonNullable<typeof track> => Boolean(track?.id && track?.uri))
-      .map((track) => ({
-        id: String(track.id),
-        uri: String(track.uri),
+    const stats: PlaylistTrackPageMinimalStats = {
+      itemsCount: 0,
+      nullTrackCount: 0,
+      localTrackCount: 0,
+      missingIdOrUriCount: 0,
+    };
+    const mappedTracks: MinimalTrack[] = [];
+    const items = Array.isArray(page.items) ? page.items : [];
+    stats.itemsCount = items.length;
+
+    for (const item of items) {
+      const track = item?.track;
+      if (!track) {
+        stats.nullTrackCount += 1;
+        continue;
+      }
+
+      const uri = String(track.uri ?? '').trim();
+      if (uri.toLowerCase().startsWith('spotify:local:')) {
+        stats.localTrackCount += 1;
+        continue;
+      }
+
+      const id = String(track.id ?? '').trim();
+      if (!id || !uri) {
+        stats.missingIdOrUriCount += 1;
+        continue;
+      }
+
+      mappedTracks.push({
+        id,
+        uri,
         name: String(track.name ?? ''),
         artistName: String(track.artists?.[0]?.name ?? ''),
         albumName: String(track.album?.name ?? ''),
         coverUrl: String(track.album?.images?.[0]?.url ?? ''),
         year: this.extractReleaseYear(track.album?.release_date),
-        explicit: Boolean(track.explicit),
-        popularity: Number(track.popularity ?? 0),
-      })) satisfies MinimalTrack[];
+        explicit: false,
+        popularity: 0,
+      });
+    }
+
+    return {
+      total: Number(page.total ?? 0),
+      next: page.next ?? null,
+      mappedTracks,
+      stats,
+    };
   }
 
   async getDevices() {

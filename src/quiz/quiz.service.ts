@@ -1,6 +1,12 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { MinimalTrack, SpotifyService } from '../spotify/spotify.service';
+import { buildPoolFromPlaylist } from './poolBuilder';
 
 type AnswerType = 'multiple-choice' | 'binary';
 
@@ -37,11 +43,12 @@ type QuizSession = {
   };
 };
 
-const MIN_POOL_TRACKS = 20;
+const MIN_POOL_TRACKS = 30;
 const MIN_QUESTION_COUNT = 10;
 const MAX_QUESTION_COUNT = 100;
 const INITIAL_PAGE_SIZE = 50;
-const INITIAL_PAGE_COUNT = 3;
+const TARGET_POOL_TRACKS = 120;
+const MAX_POOL_PAGES_FETCHED = 10;
 const MIN_YEAR = 1900;
 
 const QUESTION_POOL: QuestionTemplate[] = [
@@ -108,6 +115,7 @@ function pickRandom<T>(arr: T[]) {
 @Injectable()
 export class QuizService {
   private readonly sessions = new Map<string, QuizSession>();
+  private readonly logger = new Logger(QuizService.name);
 
   constructor(private readonly spotifyService: SpotifyService) {}
 
@@ -430,14 +438,14 @@ export class QuizService {
       throw new BadRequestException('Missing playlistId');
     }
 
-    const total = await this.spotifyService.getPlaylistTrackTotal(normalizedPlaylistId);
-    if (!Number.isFinite(total) || total < MIN_POOL_TRACKS) {
-      throw new BadRequestException('Playlist too small/empty');
-    }
-
-    const pagesFetchedOffsets = new Set<number>();
-    const pageSize = INITIAL_PAGE_SIZE;
-    const targetPages = Math.min(INITIAL_PAGE_COUNT, this.totalPlaylistPages(total, pageSize));
+    const builtPool = await buildPoolFromPlaylist(this.spotifyService, {
+      playlistId: normalizedPlaylistId,
+      pageSize: INITIAL_PAGE_SIZE,
+      targetPoolSize: TARGET_POOL_TRACKS,
+      minPoolSize: MIN_POOL_TRACKS,
+      maxPagesFetched: MAX_POOL_PAGES_FETCHED,
+    });
+    const pagesFetchedOffsets = new Set<number>(builtPool.pagesFetchedOffsets);
 
     const session: QuizSession = {
       id: randomUUID(),
@@ -450,33 +458,27 @@ export class QuizService {
       tracksById: {},
       usedTrackIds: new Set<string>(),
       poolRefillMeta: {
-        total,
-        pageSize,
+        total: builtPool.total,
+        pageSize: builtPool.pageSize,
         pagesFetchedOffsets,
       },
     };
 
-    while (pagesFetchedOffsets.size < targetPages) {
-      const offset = this.pickRandomPageOffset(total, pageSize, pagesFetchedOffsets);
-      if (offset === null) {
-        break;
-      }
-
-      const pageTracks = await this.spotifyService.getPlaylistTrackPageMinimal(
-        normalizedPlaylistId,
-        offset,
-        pageSize,
-      );
-      pagesFetchedOffsets.add(offset);
-
-      for (const track of pageTracks) {
-        this.addTrackToPool(session, track);
-      }
+    for (const track of builtPool.tracks) {
+      this.addTrackToPool(session, track);
     }
 
     if (session.poolTrackIds.length < MIN_POOL_TRACKS) {
-      throw new BadRequestException('Playlist too small/empty');
+      const d = builtPool.diagnostics;
+      throw new BadRequestException(
+        `Playlist too small / empty (pool=${session.poolTrackIds.length}, total=${d.total}, items=${d.itemsCount}, nullTrack=${d.nullTrackCount}, local=${d.localTrackCount}, missingId=${d.missingIdOrUriCount}, pages=${d.pagesFetched})`,
+      );
     }
+
+    const d = builtPool.diagnostics;
+    this.logger.log(
+      `[pool] playlist=${normalizedPlaylistId} pool=${session.poolTrackIds.length} total=${d.total} pages=${d.pagesFetched} items=${d.itemsCount} nullTrack=${d.nullTrackCount} local=${d.localTrackCount} missingId=${d.missingIdOrUriCount}`,
+    );
 
     this.sessions.set(session.id, session);
 

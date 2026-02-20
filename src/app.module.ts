@@ -7,6 +7,7 @@ import { SpotifyModule } from './spotify/spotify.module';
 import { QuizModule } from './quiz/quiz.module';
 import { MultiplayerModule } from './multiplayer/multiplayer.module';
 import { DevSpotifyController } from './dev/dev.spotify.controller';
+import { ChooseModule } from './choose/choose.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { DevSpotifyController } from './dev/dev.spotify.controller';
     }),
     AuthModule,
     SpotifyModule,
+    ChooseModule,
     QuizModule,
     MultiplayerModule,
   ],
