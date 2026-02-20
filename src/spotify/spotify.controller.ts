@@ -39,4 +39,13 @@ export class SpotifyController {
     const tracks = await this.spotifyService.getAllPlaylistTracks(playlistId);
     return { tracks };
   }
+
+  @Post('playback/play')
+  async playTrack(
+    @Headers('authorization') authorizationHeader: string | undefined,
+    @Body() body: { trackUri?: string; deviceId?: string },
+  ) {
+    this.authService.verifyHostJwtOrThrow(authorizationHeader);
+    return this.spotifyService.startPlayback(body.trackUri ?? '', body.deviceId);
+  }
 }

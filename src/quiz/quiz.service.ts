@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { SpotifyService } from '../spotify/spotify.service';
+import { MinimalTrack, SpotifyService } from '../spotify/spotify.service';
 
 type AnswerType = 'multiple-choice' | 'binary' | 'year-input';
 
@@ -10,42 +10,41 @@ type QuestionTemplate = {
   answerType: AnswerType;
 };
 
-type SpotifyTrack = {
-  id: string;
-  name: string;
-  preview_url: string | null;
-  popularity: number;
-  explicit: boolean;
-  artists: { name: string }[];
-  album: {
-    name: string;
-    release_date: string;
-    images: { url: string }[];
-  };
-};
-
 type QuizSession = {
   id: string;
   playlistId: string;
   createdAt: number;
-  remainingSongIds: string[];
-  allTracksById: Record<string, SpotifyTrack>;
+  poolTrackIds: string[];
+  tracksById: Record<string, MinimalTrack>;
+  usedTrackIds: Set<string>;
+  poolRefillMeta: {
+    total: number;
+    pageSize: number;
+    pagesFetchedOffsets: Set<number>;
+    maxPagesFetched: number;
+  };
 };
+
+const MIN_POOL_TRACKS = 20;
+const INITIAL_PAGE_SIZE = 50;
+const INITIAL_PAGE_COUNT = 3;
+const REFILL_THRESHOLD = 30;
+const MAX_PAGES_FETCHED = 10;
 
 const QUESTION_POOL: QuestionTemplate[] = [
   {
     questionText: 'In welchem Jahr erschien der Song?',
-    answerFieldPath: 'album.release_date',
+    answerFieldPath: 'year',
     answerType: 'year-input',
   },
   {
     questionText: 'Wer ist der Interpret?',
-    answerFieldPath: 'artists[0].name',
+    answerFieldPath: 'artistName',
     answerType: 'multiple-choice',
   },
   {
     questionText: 'Auf welchem Album ist der Song?',
-    answerFieldPath: 'album.name',
+    answerFieldPath: 'albumName',
     answerType: 'multiple-choice',
   },
   {
@@ -106,7 +105,7 @@ function extractByPath(object: any, path: string): unknown {
 }
 
 function normalizeValueByFieldPath(path: string, rawValue: unknown): string {
-  if (path === 'album.release_date') {
+  if (path === 'year') {
     return normalizeReleaseYear(String(rawValue ?? ''));
   }
   if (path === 'explicit') {
@@ -121,40 +120,146 @@ export class QuizService {
 
   constructor(private readonly spotifyService: SpotifyService) {}
 
-  async createSession(playlistId: string) {
-    const tracks = await this.spotifyService.getAllPlaylistTracks(playlistId);
-    const deduped = tracks.filter(
-      (track, index, arr) =>
-        track.id &&
-        arr.findIndex((candidate) => candidate.id === track.id) === index,
+  private addTrackToPool(session: QuizSession, track: MinimalTrack) {
+    if (!track.id || !track.uri) {
+      return;
+    }
+    if (!session.tracksById[track.id]) {
+      session.poolTrackIds.push(track.id);
+    }
+    session.tracksById[track.id] = track;
+  }
+
+  private totalPlaylistPages(total: number, pageSize: number) {
+    return Math.max(1, Math.ceil(Math.max(0, total) / pageSize));
+  }
+
+  private pickRandomPageOffset(total: number, pageSize: number, usedOffsets: Set<number>) {
+    const pageCount = this.totalPlaylistPages(total, pageSize);
+    if (usedOffsets.size >= pageCount) {
+      return null;
+    }
+
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const pageIndex = Math.floor(Math.random() * pageCount);
+      const offset = pageIndex * pageSize;
+      if (!usedOffsets.has(offset)) {
+        return offset;
+      }
+    }
+
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      const offset = pageIndex * pageSize;
+      if (!usedOffsets.has(offset)) {
+        return offset;
+      }
+    }
+
+    return null;
+  }
+
+  private getRemainingTrackIds(session: QuizSession) {
+    return session.poolTrackIds.filter(
+      (trackId) => Boolean(session.tracksById[trackId]) && !session.usedTrackIds.has(trackId),
     );
+  }
 
-    if (deduped.length < 4) {
-      throw new BadRequestException(
-        'Playlist must contain at least 4 readable Spotify tracks',
-      );
+  private async refillPoolIfNeeded(session: QuizSession) {
+    const remaining = this.getRemainingTrackIds(session).length;
+    if (remaining >= REFILL_THRESHOLD) {
+      return;
     }
 
-    const allTracksById: Record<string, SpotifyTrack> = {};
-    for (const track of deduped) {
-      allTracksById[track.id] = track;
+    if (
+      session.poolRefillMeta.pagesFetchedOffsets.size >=
+      session.poolRefillMeta.maxPagesFetched
+    ) {
+      return;
     }
+
+    const offset = this.pickRandomPageOffset(
+      session.poolRefillMeta.total,
+      session.poolRefillMeta.pageSize,
+      session.poolRefillMeta.pagesFetchedOffsets,
+    );
+    if (offset === null) {
+      return;
+    }
+
+    const tracks = await this.spotifyService.getPlaylistTrackPageMinimal(
+      session.playlistId,
+      offset,
+      session.poolRefillMeta.pageSize,
+    );
+    session.poolRefillMeta.pagesFetchedOffsets.add(offset);
+
+    for (const track of tracks) {
+      this.addTrackToPool(session, track);
+    }
+  }
+
+  async createSession(playlistId: string) {
+    const normalizedPlaylistId = (playlistId ?? '').trim();
+    if (!normalizedPlaylistId) {
+      throw new BadRequestException('Missing playlistId');
+    }
+
+    const total = await this.spotifyService.getPlaylistTrackTotal(normalizedPlaylistId);
+    if (!Number.isFinite(total) || total < MIN_POOL_TRACKS) {
+      throw new BadRequestException('Playlist too small/empty');
+    }
+
+    const pagesFetchedOffsets = new Set<number>();
+    const pageSize = INITIAL_PAGE_SIZE;
+    const targetPages = Math.min(
+      INITIAL_PAGE_COUNT,
+      this.totalPlaylistPages(total, pageSize),
+    );
 
     const session: QuizSession = {
       id: randomUUID(),
-      playlistId,
+      playlistId: normalizedPlaylistId,
       createdAt: Date.now(),
-      remainingSongIds: deduped.map((track) => track.id),
-      allTracksById,
+      poolTrackIds: [],
+      tracksById: {},
+      usedTrackIds: new Set<string>(),
+      poolRefillMeta: {
+        total,
+        pageSize,
+        pagesFetchedOffsets,
+        maxPagesFetched: MAX_PAGES_FETCHED,
+      },
     };
+
+    while (pagesFetchedOffsets.size < targetPages) {
+      const offset = this.pickRandomPageOffset(total, pageSize, pagesFetchedOffsets);
+      if (offset === null) {
+        break;
+      }
+
+      const pageTracks = await this.spotifyService.getPlaylistTrackPageMinimal(
+        normalizedPlaylistId,
+        offset,
+        pageSize,
+      );
+      pagesFetchedOffsets.add(offset);
+
+      for (const track of pageTracks) {
+        this.addTrackToPool(session, track);
+      }
+    }
+
+    if (session.poolTrackIds.length < MIN_POOL_TRACKS) {
+      throw new BadRequestException('Playlist too small/empty');
+    }
 
     this.sessions.set(session.id, session);
 
     return {
       sessionId: session.id,
-      playlistId,
-      totalSongs: session.remainingSongIds.length,
-      songIDs: [...session.remainingSongIds],
+      playlistId: normalizedPlaylistId,
+      totalSongs: session.poolTrackIds.length,
+      songIDs: [...session.poolTrackIds],
     };
   }
 
@@ -186,29 +291,49 @@ export class QuizService {
       return correctAnswer === 'Yes' ? ['No'] : ['Yes'];
     }
 
-    const candidates = Object.values(session.allTracksById)
-      .filter((track) => track.id !== correctSongId)
-      .map((track) =>
-        normalizeValueByFieldPath(answerFieldPath, extractByPath(track, answerFieldPath)),
-      )
-      .filter((value) => value && value !== correctAnswer);
+    const candidateTrackIds = shuffle(
+      session.poolTrackIds.filter((trackId) => trackId !== correctSongId),
+    );
+    const wrongAnswers: string[] = [];
+    const seen = new Set<string>();
 
-    const unique = [...new Set(candidates)];
-    return shuffle(unique).slice(0, 3);
+    for (const trackId of candidateTrackIds) {
+      const track = session.tracksById[trackId];
+      if (!track) {
+        continue;
+      }
+      const value = normalizeValueByFieldPath(
+        answerFieldPath,
+        extractByPath(track, answerFieldPath),
+      );
+      if (!value || value === correctAnswer || seen.has(value)) {
+        continue;
+      }
+
+      seen.add(value);
+      wrongAnswers.push(value);
+      if (wrongAnswers.length >= 3) {
+        break;
+      }
+    }
+
+    return wrongAnswers;
   }
 
-  nextQuestion(sessionId: string) {
+  async nextQuestion(sessionId: string) {
     const session = this.getSession(sessionId);
-    if (!session.remainingSongIds.length) {
+
+    await this.refillPoolIfNeeded(session);
+
+    const remainingTrackIds = this.getRemainingTrackIds(session);
+    if (!remainingTrackIds.length) {
       return { done: true, remainingSongIDs: [] };
     }
 
-    const correctSongId = pickRandom(session.remainingSongIds);
-    session.remainingSongIds = session.remainingSongIds.filter(
-      (songId) => songId !== correctSongId,
-    );
+    const correctSongId = pickRandom(remainingTrackIds);
+    session.usedTrackIds.add(correctSongId);
 
-    const track = session.allTracksById[correctSongId];
+    const track = session.tracksById[correctSongId];
     const questionTemplate = pickRandom(QUESTION_POOL);
 
     const rawCorrect = extractByPath(track, questionTemplate.answerFieldPath);
@@ -225,14 +350,17 @@ export class QuizService {
       questionTemplate.answerType,
     );
 
-    const options = shuffle([correctAnswer, ...wrongAnswers]).slice(
-      0,
-      questionTemplate.answerType === 'binary' ? 2 : 4,
-    );
+    const options =
+      questionTemplate.answerType === 'binary'
+        ? shuffle([correctAnswer, ...(correctAnswer === 'Yes' ? ['No'] : ['Yes'])]).slice(
+            0,
+            2,
+          )
+        : shuffle([correctAnswer, ...wrongAnswers]).slice(0, 4);
 
     return {
       done: false,
-      remainingSongIDs: [...session.remainingSongIds],
+      remainingSongIDs: this.getRemainingTrackIds(session),
       question: {
         questionObject: {
           questionText: questionTemplate.questionText,
@@ -240,16 +368,18 @@ export class QuizService {
           answerType: questionTemplate.answerType,
         },
         correctSongId,
+        correctTrackUri: track.uri,
         correctAnswer,
         wrongAnswers,
         options,
-        trackPreviewUrl: track.preview_url,
         trackInfo: {
           id: track.id,
+          uri: track.uri,
           name: track.name,
-          artist: track.artists?.[0]?.name ?? '',
-          album: track.album?.name ?? '',
-          year: normalizeReleaseYear(track.album?.release_date ?? ''),
+          artist: track.artistName,
+          album: track.albumName,
+          coverUrl: track.coverUrl,
+          year: track.year,
           explicit: track.explicit,
           popularity: track.popularity,
         },

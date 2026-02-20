@@ -106,12 +106,29 @@ async function bootstrap() {
   });
 
   const preferredPort = Number(process.env.PORT ?? 3000);
-  const boundPort = await listenWithFallback(app, logger, preferredPort);
+  const allowPortFallback = process.env.ALLOW_PORT_FALLBACK === '1';
+  let boundPort = preferredPort;
+
+  if (allowPortFallback) {
+    boundPort = await listenWithFallback(app, logger, preferredPort);
+  } else {
+    try {
+      await app.listen(preferredPort, '0.0.0.0');
+    } catch (error) {
+      if (isAddrInUseError(error)) {
+        logger.error(
+          `Port ${preferredPort} is already in use. Stop the other process or set PORT=<free-port>.`,
+        );
+      }
+      throw error;
+    }
+  }
 
   if (isDev) {
     const mobileRedirect = requiredEnv('SPOTIFY_REDIRECT_URI');
     const webRedirect = optionalEnv('SPOTIFY_REDIRECT_URI_WEB') ?? '<not-set>';
     logger.log(`Backend listening on port ${boundPort}`);
+    logger.log(`ALLOW_PORT_FALLBACK: ${allowPortFallback ? '1' : '0'}`);
     logger.log(`CORS ENABLED ORIGINS: ${allowedOrigins.join(', ') || '<none>'}`);
     logger.log(`Spotify redirect (mobile): ${mobileRedirect}`);
     logger.log(`Spotify redirect (web): ${webRedirect}`);

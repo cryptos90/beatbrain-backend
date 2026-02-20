@@ -4,9 +4,10 @@ import { randomBytes, randomUUID } from 'crypto';
 type Player = {
   id: string;
   name: string;
-  icon: string;
+  avatarDataUrl: string;
   score: number;
   latestAnswer: string | null;
+  readyForNext: boolean;
 };
 
 type Lobby = {
@@ -19,6 +20,10 @@ type Lobby = {
   roundDeadline: number | null;
   roundTimerMs: number;
 };
+
+const MAX_PLAYERS = 10;
+const MAX_PLAYER_NAME_LENGTH = 20;
+const MAX_AVATAR_DATA_URL_LENGTH = 200_000;
 
 @Injectable()
 export class MultiplayerService {
@@ -69,11 +74,14 @@ export class MultiplayerService {
   }
 
   removeHostLobby(hostSocketId: string) {
+    const removedJoinCodes: string[] = [];
     for (const [code, lobby] of this.lobbies.entries()) {
       if (lobby.hostSocketId === hostSocketId) {
         this.lobbies.delete(code);
+        removedJoinCodes.push(code);
       }
     }
+    return removedJoinCodes;
   }
 
   removePlayer(playerSocketId: string) {
@@ -82,20 +90,45 @@ export class MultiplayerService {
     }
   }
 
-  addPlayer(joinCode: string, playerSocketId: string, name: string, icon: string) {
+  addPlayer(
+    joinCode: string,
+    playerSocketId: string,
+    name: string,
+    avatarDataUrl: string,
+  ) {
     const lobby = this.getLobby(joinCode);
-    if (lobby.players.size >= 10) {
-      throw new BadRequestException('Lobby is full (max 10 players)');
+    if (lobby.players.size >= MAX_PLAYERS) {
+      throw new BadRequestException(`Lobby is full (max ${MAX_PLAYERS} players)`);
     }
     if (lobby.status !== 'lobby') {
       throw new BadRequestException('Game already started');
     }
+
+    const normalizedName = (name ?? '').trim();
+    if (!normalizedName || normalizedName.length > MAX_PLAYER_NAME_LENGTH) {
+      throw new BadRequestException(
+        `Player name must be 1..${MAX_PLAYER_NAME_LENGTH} characters`,
+      );
+    }
+
+    const normalizedAvatar = (avatarDataUrl ?? '').trim();
+    if (!normalizedAvatar) {
+      throw new BadRequestException('Avatar is required');
+    }
+    if (normalizedAvatar.length > MAX_AVATAR_DATA_URL_LENGTH) {
+      throw new BadRequestException('Avatar too large');
+    }
+    if (!normalizedAvatar.startsWith('data:image/')) {
+      throw new BadRequestException('Avatar must be an image data URL');
+    }
+
     lobby.players.set(playerSocketId, {
       id: randomUUID(),
-      name: (name ?? '').trim().slice(0, 20) || 'Player',
-      icon: (icon ?? '').trim().slice(0, 8) || '🙂',
+      name: normalizedName,
+      avatarDataUrl: normalizedAvatar,
       score: 0,
       latestAnswer: null,
+      readyForNext: false,
     });
     return lobby;
   }
@@ -108,6 +141,7 @@ export class MultiplayerService {
     lobby.roundDeadline = Date.now() + timerMs;
     for (const player of lobby.players.values()) {
       player.latestAnswer = null;
+      player.readyForNext = false;
     }
     return lobby;
   }
@@ -130,6 +164,7 @@ export class MultiplayerService {
     lobby.status = 'reveal';
     lobby.roundDeadline = null;
     for (const player of lobby.players.values()) {
+      player.readyForNext = false;
       if (
         player.latestAnswer &&
         player.latestAnswer.toLowerCase() === correctAnswer.toLowerCase()
@@ -147,6 +182,7 @@ export class MultiplayerService {
     lobby.roundDeadline = null;
     for (const player of lobby.players.values()) {
       player.latestAnswer = null;
+      player.readyForNext = false;
     }
     return lobby;
   }
@@ -158,6 +194,35 @@ export class MultiplayerService {
     return lobby;
   }
 
+  markPlayerContinue(joinCode: string, playerSocketId: string) {
+    const lobby = this.getLobby(joinCode);
+    if (lobby.status !== 'reveal') {
+      throw new BadRequestException('Continue is only allowed during reveal');
+    }
+
+    const player = lobby.players.get(playerSocketId);
+    if (!player) {
+      throw new NotFoundException('Player not in lobby');
+    }
+
+    player.readyForNext = true;
+    return lobby;
+  }
+
+  countReadyForNext(lobby: Lobby) {
+    let ready = 0;
+    for (const player of lobby.players.values()) {
+      if (player.readyForNext) {
+        ready += 1;
+      }
+    }
+    return ready;
+  }
+
+  allPlayersReadyForNext(lobby: Lobby) {
+    return lobby.players.size > 0 && this.countReadyForNext(lobby) === lobby.players.size;
+  }
+
   toPublicLobbyState(lobby: Lobby) {
     return {
       joinCode: lobby.joinCode,
@@ -167,12 +232,14 @@ export class MultiplayerService {
       players: Array.from(lobby.players.values()).map((player) => ({
         id: player.id,
         name: player.name,
-        icon: player.icon,
+        avatarDataUrl: player.avatarDataUrl,
         score: player.score,
         answered: Boolean(player.latestAnswer),
         latestAnswer: player.latestAnswer,
+        readyForNext: player.readyForNext,
       })),
-      maxPlayers: 10,
+      maxPlayers: MAX_PLAYERS,
     };
   }
 }
+

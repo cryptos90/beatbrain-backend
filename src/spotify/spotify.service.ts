@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   HttpException,
   Injectable,
   Logger,
@@ -16,6 +17,7 @@ export type SpotifyPlaylistSummary = {
 export type SpotifyPlaylistTrackItem = {
   track?: {
     id: string;
+    uri?: string;
     name: string;
     preview_url: string | null;
     popularity: number;
@@ -29,9 +31,58 @@ export type SpotifyPlaylistTrackItem = {
   };
 };
 
+export type MinimalTrack = {
+  id: string;
+  uri: string;
+  name: string;
+  artistName: string;
+  albumName: string;
+  coverUrl: string;
+  year: string;
+  explicit: boolean;
+  popularity: number;
+};
+
 type PlaylistTracksPage = {
   items: SpotifyPlaylistTrackItem[];
   next: string | null;
+};
+
+type PlaylistTrackTotalResponse = {
+  tracks?: {
+    total?: number;
+  };
+};
+
+type PlaylistTracksMinimalPage = {
+  items?: Array<{
+    track?: {
+      id?: string;
+      uri?: string;
+      name?: string;
+      popularity?: number;
+      explicit?: boolean;
+      artists?: { name?: string }[];
+      album?: {
+        name?: string;
+        release_date?: string;
+        images?: { url?: string }[];
+      };
+    };
+  }>;
+  total?: number;
+};
+
+type SpotifyDevicesResponse = {
+  devices?: SpotifyPlaybackDevice[];
+};
+
+export type SpotifyPlaybackDevice = {
+  id: string;
+  is_active: boolean;
+  is_restricted: boolean;
+  name: string;
+  type: string;
 };
 
 type CachedPlaylistTracks = {
@@ -63,11 +114,30 @@ export class SpotifyService {
 
   constructor(private readonly authService: AuthService) {}
 
-  private async spotifyApiFetch<T>(
+  private parseRetryAfterSeconds(response: Response) {
+    const retryAfterHeader = response.headers.get('Retry-After');
+    if (!retryAfterHeader) {
+      return undefined;
+    }
+    const parsed = Number.parseInt(retryAfterHeader, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return undefined;
+    }
+    return parsed;
+  }
+
+  private extractReleaseYear(rawDate: string | undefined) {
+    if (!rawDate) {
+      return '';
+    }
+    return rawDate.split('-')[0] ?? '';
+  }
+
+  private async spotifyApiRequest(
     pathOrUrl: string,
     options?: RequestInit,
     retryAfterRefresh = true,
-  ): Promise<T> {
+  ): Promise<Response> {
     const accessToken = await this.authService.getValidHostSpotifyAccessToken();
     const isAbsolute = /^https?:\/\//i.test(pathOrUrl);
     const url = isAbsolute ? pathOrUrl : `https://api.spotify.com/v1${pathOrUrl}`;
@@ -80,22 +150,46 @@ export class SpotifyService {
         logger: this.logger,
       });
     } catch (error) {
-      if (error instanceof SpotifyUnauthorizedError && retryAfterRefresh) {
+      if (
+        error instanceof SpotifyUnauthorizedError &&
+        error.status === 401 &&
+        retryAfterRefresh
+      ) {
         await this.authService.forceRefreshAfterUnauthorized();
-        return this.spotifyApiFetch<T>(pathOrUrl, options, false);
+        return this.spotifyApiRequest(pathOrUrl, options, false);
+      }
+      if (error instanceof SpotifyUnauthorizedError && error.status === 401) {
+        throw new UnauthorizedException(error.message);
       }
       if (error instanceof SpotifyUnauthorizedError) {
-        throw new UnauthorizedException(error.message);
+        throw new HttpException(
+          {
+            statusCode: error.status,
+            message: `Spotify API authorization failed (${error.status})`,
+          },
+          error.status,
+        );
       }
       throw error;
     }
 
+    return response;
+  }
+
+  private async spotifyApiFetch<T>(
+    pathOrUrl: string,
+    options?: RequestInit,
+    retryAfterRefresh = true,
+  ): Promise<T> {
+    const response = await this.spotifyApiRequest(
+      pathOrUrl,
+      options,
+      retryAfterRefresh,
+    );
+
     if (!response.ok) {
       const payload = (await response.json().catch(() => ({}))) as Record<string, any>;
-      const retryAfterHeader = response.headers.get('Retry-After');
-      const retryAfterSeconds = retryAfterHeader
-        ? Number.parseInt(retryAfterHeader, 10)
-        : undefined;
+      const retryAfterSeconds = this.parseRetryAfterSeconds(response);
 
       if (response.status === 429) {
         throw new HttpException(
@@ -121,7 +215,8 @@ export class SpotifyService {
       );
     }
 
-    return (await response.json()) as T;
+    const text = await response.text();
+    return text ? (JSON.parse(text) as T) : ({} as T);
   }
 
   private resolvePlaylistCacheKey(hostUserId: string, playlistId: string) {
@@ -212,5 +307,191 @@ export class SpotifyService {
     return allItems
       .map((item) => item.track)
       .filter((track): track is NonNullable<typeof track> => Boolean(track?.id));
+  }
+
+  async getPlaylistTrackTotal(playlistId: string) {
+    const normalizedPlaylistId = (playlistId ?? '').trim();
+    if (!normalizedPlaylistId) {
+      throw new BadRequestException('Missing playlistId');
+    }
+
+    const payload = await this.spotifyApiFetch<PlaylistTrackTotalResponse>(
+      `/playlists/${encodeURIComponent(normalizedPlaylistId)}?fields=tracks.total`,
+    );
+    return Number(payload?.tracks?.total ?? 0);
+  }
+
+  async getPlaylistTrackPageMinimal(playlistId: string, offset: number, limit: number) {
+    const normalizedPlaylistId = (playlistId ?? '').trim();
+    if (!normalizedPlaylistId) {
+      throw new BadRequestException('Missing playlistId');
+    }
+
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+
+    const page = await this.spotifyApiFetch<PlaylistTracksMinimalPage>(
+      `/playlists/${encodeURIComponent(
+        normalizedPlaylistId,
+      )}/tracks?limit=${safeLimit}&offset=${safeOffset}&fields=items(track(id,name,uri,artists(name),album(name,release_date,images(url)),explicit,popularity)),total`,
+    );
+
+    return (page.items ?? [])
+      .map((item) => item.track)
+      .filter((track): track is NonNullable<typeof track> => Boolean(track?.id && track?.uri))
+      .map((track) => ({
+        id: String(track.id),
+        uri: String(track.uri),
+        name: String(track.name ?? ''),
+        artistName: String(track.artists?.[0]?.name ?? ''),
+        albumName: String(track.album?.name ?? ''),
+        coverUrl: String(track.album?.images?.[0]?.url ?? ''),
+        year: this.extractReleaseYear(track.album?.release_date),
+        explicit: Boolean(track.explicit),
+        popularity: Number(track.popularity ?? 0),
+      })) satisfies MinimalTrack[];
+  }
+
+  async getDevices() {
+    const payload = await this.spotifyApiFetch<SpotifyDevicesResponse>('/me/player/devices');
+    return (payload.devices ?? []).map((device) => ({
+      id: String(device.id ?? ''),
+      is_active: Boolean(device.is_active),
+      is_restricted: Boolean(device.is_restricted),
+      name: String(device.name ?? ''),
+      type: String(device.type ?? ''),
+    }));
+  }
+
+  async startPlayback(trackUri: string, deviceId?: string) {
+    const normalizedTrackUri = String(trackUri ?? '').trim();
+    if (!normalizedTrackUri) {
+      throw new BadRequestException('Missing track URI');
+    }
+
+    let resolvedDeviceId = String(deviceId ?? '').trim();
+    if (!resolvedDeviceId) {
+      try {
+        const devices = await this.getDevices();
+        const preferred =
+          devices.find((device) => device.is_active) ??
+          devices.find((device) => !device.is_restricted);
+        if (preferred?.id) {
+          resolvedDeviceId = preferred.id;
+        }
+      } catch (error) {
+        if (error instanceof HttpException && error.getStatus() === 401) {
+          throw new UnauthorizedException('Spotify authorization failed. Please login again.');
+        }
+        if (error instanceof HttpException && error.getStatus() === 403) {
+          throw new HttpException(
+            {
+              statusCode: 403,
+              message: 'Playback requires Spotify Premium / missing scope.',
+            },
+            403,
+          );
+        }
+        throw error;
+      }
+    }
+
+    const query = resolvedDeviceId
+      ? `?device_id=${encodeURIComponent(resolvedDeviceId)}`
+      : '';
+    const path = `/me/player/play${query}`;
+
+    try {
+      const response = await this.spotifyApiRequest(path, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          uris: [normalizedTrackUri],
+          position_ms: 0,
+        }),
+      });
+
+      if (response.status === 404) {
+        throw new HttpException(
+          {
+            statusCode: 404,
+            message: 'No active Spotify device. Open Spotify and start playing something once.',
+          },
+          404,
+        );
+      }
+
+      if (response.status === 403) {
+        throw new HttpException(
+          {
+            statusCode: 403,
+            message: 'Playback requires Spotify Premium / missing scope.',
+          },
+          403,
+        );
+      }
+
+      if (response.status === 401) {
+        throw new UnauthorizedException('Spotify authorization failed. Please login again.');
+      }
+
+      if (response.status === 429) {
+        const retryAfterSeconds = this.parseRetryAfterSeconds(response);
+        throw new HttpException(
+          {
+            statusCode: 429,
+            message: 'Spotify API rate limit reached',
+            retryAfterSeconds,
+          },
+          429,
+        );
+      }
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as Record<string, any>;
+        throw new HttpException(
+          {
+            statusCode: response.status,
+            message:
+              payload?.error?.message ??
+              payload?.message ??
+              `Spotify playback request failed (${response.status})`,
+          },
+          response.status,
+        );
+      }
+
+      return {
+        ok: true,
+        deviceId: resolvedDeviceId || null,
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        if (error.getStatus() === 404) {
+          throw new HttpException(
+            {
+              statusCode: 404,
+              message: 'No active Spotify device. Open Spotify and start playing something once.',
+            },
+            404,
+          );
+        }
+        if (error.getStatus() === 403) {
+          throw new HttpException(
+            {
+              statusCode: 403,
+              message: 'Playback requires Spotify Premium / missing scope.',
+            },
+            403,
+          );
+        }
+      }
+      if (error instanceof UnauthorizedException) {
+        throw new UnauthorizedException('Spotify authorization failed. Please login again.');
+      }
+      throw error;
+    }
   }
 }
