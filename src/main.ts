@@ -117,7 +117,7 @@ async function bootstrap() {
     } catch (error) {
       if (isAddrInUseError(error)) {
         logger.error(
-          `Port ${preferredPort} is already in use. Stop the other process or set PORT=<free-port>.`,
+          `Port ${preferredPort} is already in use. Stop the other process or set PORT=${preferredPort + 1}.`,
         );
       }
       throw error;
@@ -142,3 +142,4 @@ bootstrap().catch((error) => {
   );
   process.exit(1);
 });
+

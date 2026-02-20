@@ -341,5 +341,42 @@ export class MultiplayerGateway {
       .emit('game:ended', this.multiplayerService.toPublicLobbyState(endedLobby));
     return this.multiplayerService.toPublicLobbyState(endedLobby);
   }
-}
 
+  @SubscribeMessage('host:restartQuiz')
+  hostRestartQuiz(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: HostActionBody,
+  ) {
+    const hostJwt = this.assertHost(body.hostJwt);
+    const lobby = this.multiplayerService.getLobby(body.joinCode);
+    if (lobby.hostSocketId !== client.id || lobby.hostJwtSub !== hostJwt.sub) {
+      throw new Error('Host not authorized for this lobby');
+    }
+    this.clearRoundTimer(body.joinCode);
+    const resetLobby = this.multiplayerService.resetGame(body.joinCode);
+    const publicState = this.multiplayerService.toPublicLobbyState(resetLobby);
+    this.server.to(this.normalizeJoinCode(body.joinCode)).emit('game:restarted', publicState);
+    this.broadcastLobby(body.joinCode);
+    return publicState;
+  }
+
+  @SubscribeMessage('host:returnToMenu')
+  hostReturnToMenu(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: HostActionBody,
+  ) {
+    const hostJwt = this.assertHost(body.hostJwt);
+    const lobby = this.multiplayerService.getLobby(body.joinCode);
+    if (lobby.hostSocketId !== client.id || lobby.hostJwtSub !== hostJwt.sub) {
+      throw new Error('Host not authorized for this lobby');
+    }
+    this.clearRoundTimer(body.joinCode);
+    const menuLobby = this.multiplayerService.clearToMenu(body.joinCode);
+    const publicState = this.multiplayerService.toPublicLobbyState(menuLobby);
+    this.server
+      .to(this.normalizeJoinCode(body.joinCode))
+      .emit('session:returnedToMenu', publicState);
+    this.broadcastLobby(body.joinCode);
+    return publicState;
+  }
+}

@@ -236,19 +236,32 @@ export class SpotifyService {
         continue;
       }
 
-      const playlist = await this.spotifyApiFetch<SpotifyPlaylistSummary>(
-        `/playlists/${encodeURIComponent(id)}?fields=id,name,images(url)`,
-      );
-      const normalized = {
-        id: playlist.id,
-        title: playlist.name,
-        imageUrl: playlist.images?.[0]?.url ?? '',
-      };
-      this.resolvePlaylistCache.set(cacheKey, {
-        playlist: normalized,
-        expiresAt: Date.now() + RESOLVE_PLAYLIST_CACHE_TTL_MS,
-      });
-      results.push(normalized);
+      try {
+        const playlist = await this.spotifyApiFetch<SpotifyPlaylistSummary>(
+          `/playlists/${encodeURIComponent(id)}?fields=id,name,images(url)`,
+        );
+        const normalized = {
+          id: playlist.id,
+          title: playlist.name,
+          imageUrl: playlist.images?.[0]?.url ?? '',
+        };
+        this.resolvePlaylistCache.set(cacheKey, {
+          playlist: normalized,
+          expiresAt: Date.now() + RESOLVE_PLAYLIST_CACHE_TTL_MS,
+        });
+        results.push(normalized);
+      } catch (error) {
+        if (
+          error instanceof HttpException &&
+          (error.getStatus() === 400 || error.getStatus() === 404)
+        ) {
+          this.logger.warn(
+            `[resolve] playlist not found/inaccessible/invalid, skipping id=${id}`,
+          );
+          continue;
+        }
+        throw error;
+      }
     }
 
     return results;

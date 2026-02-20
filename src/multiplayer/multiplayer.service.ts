@@ -29,6 +29,18 @@ const MAX_AVATAR_DATA_URL_LENGTH = 200_000;
 export class MultiplayerService {
   private readonly lobbies = new Map<string, Lobby>();
 
+  private resetLobbyForMenu(lobby: Lobby) {
+    lobby.status = 'lobby';
+    lobby.currentQuestionId = null;
+    lobby.roundDeadline = null;
+    for (const player of lobby.players.values()) {
+      player.score = 0;
+      player.latestAnswer = null;
+      player.readyForNext = false;
+    }
+    return lobby;
+  }
+
   private generateJoinCode() {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let result = '';
@@ -194,6 +206,16 @@ export class MultiplayerService {
     return lobby;
   }
 
+  resetGame(joinCode: string) {
+    const lobby = this.getLobby(joinCode);
+    return this.resetLobbyForMenu(lobby);
+  }
+
+  clearToMenu(joinCode: string) {
+    const lobby = this.getLobby(joinCode);
+    return this.resetLobbyForMenu(lobby);
+  }
+
   markPlayerContinue(joinCode: string, playerSocketId: string) {
     const lobby = this.getLobby(joinCode);
     if (lobby.status !== 'reveal') {
@@ -242,4 +264,3 @@ export class MultiplayerService {
     };
   }
 }
-
