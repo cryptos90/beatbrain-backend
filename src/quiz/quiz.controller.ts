@@ -12,10 +12,19 @@ export class QuizController {
   @Post('sessions')
   async createSession(
     @Headers('authorization') authorizationHeader: string | undefined,
-    @Body() body: { playlistId?: string },
+    @Body()
+    body: {
+      playlistId?: string;
+      questionCount?: number;
+      decadeTag?: string;
+    },
   ) {
     this.authService.verifyHostJwtOrThrow(authorizationHeader);
-    return this.quizService.createSession((body.playlistId ?? '').trim());
+    return this.quizService.createSession({
+      playlistId: (body.playlistId ?? '').trim(),
+      questionCount: body.questionCount,
+      decadeTag: typeof body.decadeTag === 'string' ? body.decadeTag : undefined,
+    });
   }
 
   @Post('sessions/:id/next')
