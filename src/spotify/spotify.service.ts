@@ -5,6 +5,7 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { createHash } from 'crypto';
 import type { QuizSongMinimal } from '../quiz/types/quizSong';
 import { AuthService } from '../auth/auth.service';
 import { SpotifyUnauthorizedError, spotifyFetch } from './spotifyHttp';
@@ -142,6 +143,7 @@ const RESOLVE_PLAYLIST_CACHE_TTL_MS = 30_000;
 type SpotifyRequestContext = {
   playlistId?: string;
   skipForbiddenDiagnostics?: boolean;
+  action?: 'spotify_meta' | 'spotify_tracks';
 };
 
 type PlaylistForbiddenDiagnosis = {
@@ -149,6 +151,12 @@ type PlaylistForbiddenDiagnosis = {
   tokenUserId?: string;
   playlistOwnerId?: string;
   spotifyMessage?: string;
+};
+
+type SpotifyApiRequestResult = {
+  response: Response;
+  endpointPath: string;
+  tokenFingerprint: string;
 };
 
 @Injectable()
@@ -188,30 +196,123 @@ export class SpotifyService {
     return maybeYear;
   }
 
+  private async getUserSpotifyAccessTokenOrThrow(): Promise<string> {
+    const token = await this.authService.getValidHostSpotifyAccessToken();
+    const normalized = String(token ?? '').trim();
+    if (!normalized) {
+      throw new UnauthorizedException('Spotify access token unavailable');
+    }
+    return normalized;
+  }
+
+  private buildTokenFingerprint(accessToken: string) {
+    return createHash('sha256').update(accessToken).digest('hex').slice(0, 8);
+  }
+
+  private resolveSpotifyEndpointPath(pathOrUrl: string) {
+    const isAbsolute = /^https?:\/\//i.test(pathOrUrl);
+    if (!isAbsolute) {
+      return `/v1${pathOrUrl}`;
+    }
+
+    try {
+      const parsed = new URL(pathOrUrl);
+      return `${parsed.pathname}${parsed.search}`;
+    } catch {
+      return pathOrUrl;
+    }
+  }
+
+  private logSpotifyCallStart(
+    context: SpotifyRequestContext | undefined,
+    endpointPath: string,
+    tokenFingerprint: string,
+  ) {
+    if (!context?.action) {
+      return;
+    }
+
+    this.logger.log(
+      `[spotify-debug] ${JSON.stringify({
+        action: context.action,
+        playlistId: context.playlistId ?? null,
+        endpointPath,
+        tokenFingerprint,
+      })}`,
+    );
+  }
+
+  private async logSpotifyCallError(
+    context: SpotifyRequestContext | undefined,
+    input: {
+      endpointPath: string;
+      tokenFingerprint: string;
+      statusCode: number;
+      spotifyMessage?: string;
+    },
+  ) {
+    if (!context?.action) {
+      return;
+    }
+
+    const shouldAttachTokenUserId =
+      (input.statusCode === 401 || input.statusCode === 403) &&
+      !context.skipForbiddenDiagnostics;
+    const tokenUserId = shouldAttachTokenUserId
+      ? await this.tryResolveSpotifyTokenUserId()
+      : null;
+
+    this.logger.warn(
+      `[spotify-debug] ${JSON.stringify({
+        action: context.action,
+        playlistId: context.playlistId ?? null,
+        endpointPath: input.endpointPath,
+        statusCode: input.statusCode,
+        spotifyMessage: input.spotifyMessage ?? null,
+        tokenFingerprint: input.tokenFingerprint,
+        tokenUserId: tokenUserId ?? null,
+      })}`,
+    );
+  }
+
   private async spotifyApiRequest(
     pathOrUrl: string,
     options?: RequestInit,
     retryAfterRefresh = true,
-  ): Promise<Response> {
-    const accessToken = await this.authService.getValidHostSpotifyAccessToken();
+    context?: SpotifyRequestContext,
+  ): Promise<SpotifyApiRequestResult> {
+    const accessToken = await this.getUserSpotifyAccessTokenOrThrow();
+    const tokenFingerprint = this.buildTokenFingerprint(accessToken);
+    const endpointPath = this.resolveSpotifyEndpointPath(pathOrUrl);
     const isAbsolute = /^https?:\/\//i.test(pathOrUrl);
-    const url = isAbsolute ? pathOrUrl : `https://api.spotify.com/v1${pathOrUrl}`;
+    const url = isAbsolute ? pathOrUrl : `https://api.spotify.com${endpointPath}`;
+
+    this.logSpotifyCallStart(context, endpointPath, tokenFingerprint);
 
     let response: Response;
     try {
       response = await spotifyFetch(url, options, {
         accessToken,
-        endpointPath: pathOrUrl,
+        endpointPath,
         logger: this.logger,
       });
     } catch (error) {
+      if (error instanceof SpotifyUnauthorizedError && error.status === 401) {
+        await this.logSpotifyCallError(context, {
+          endpointPath,
+          tokenFingerprint,
+          statusCode: 401,
+          spotifyMessage: error.message,
+        });
+      }
+
       if (
         error instanceof SpotifyUnauthorizedError &&
         error.status === 401 &&
         retryAfterRefresh
       ) {
         await this.authService.forceRefreshAfterUnauthorized();
-        return this.spotifyApiRequest(pathOrUrl, options, false);
+        return this.spotifyApiRequest(pathOrUrl, options, false, context);
       }
       if (error instanceof SpotifyUnauthorizedError && error.status === 401) {
         throw new UnauthorizedException(error.message);
@@ -219,7 +320,11 @@ export class SpotifyService {
       throw error;
     }
 
-    return response;
+    return {
+      response,
+      endpointPath,
+      tokenFingerprint,
+    };
   }
 
   private async spotifyApiFetch<T>(
@@ -228,21 +333,42 @@ export class SpotifyService {
     retryAfterRefresh = true,
     context?: SpotifyRequestContext,
   ): Promise<T> {
-    const response = await this.spotifyApiRequest(
+    const { response, endpointPath, tokenFingerprint } = await this.spotifyApiRequest(
       pathOrUrl,
       options,
       retryAfterRefresh,
+      context,
     );
 
     if (!response.ok) {
-      const payload = (await response.json().catch(() => ({}))) as Record<string, any>;
+      const text = await response.text().catch(() => '');
+      let payload: Record<string, any> | undefined;
+      if (text) {
+        try {
+          payload = JSON.parse(text) as Record<string, any>;
+        } catch {
+          payload = undefined;
+        }
+      }
       const retryAfterSeconds = this.parseRetryAfterSeconds(response);
+      const spotifyMessage = this.extractSpotifyErrorMessage(
+        payload,
+        response.status,
+        response.statusText,
+      );
+
+      await this.logSpotifyCallError(context, {
+        endpointPath,
+        tokenFingerprint,
+        statusCode: response.status,
+        spotifyMessage,
+      });
 
       if (response.status === 429) {
         throw new HttpException(
           {
             statusCode: 429,
-            message: payload?.error?.message ?? 'Spotify API rate limit reached',
+            message: spotifyMessage,
             retryAfterSeconds:
               typeof retryAfterSeconds === 'number' && Number.isFinite(retryAfterSeconds)
                 ? retryAfterSeconds
@@ -255,7 +381,7 @@ export class SpotifyService {
       throw new HttpException(
         {
           statusCode: response.status,
-          message: this.extractSpotifyErrorMessage(payload, response.status),
+          message: spotifyMessage,
         },
         response.status,
       );
@@ -268,6 +394,7 @@ export class SpotifyService {
   private extractSpotifyErrorMessage(
     payload: Record<string, any> | undefined,
     status: number,
+    statusText?: string,
   ) {
     const raw =
       payload?.error?.message ??
@@ -275,7 +402,8 @@ export class SpotifyService {
       payload?.error_description ??
       payload?.error;
     const normalized = String(raw ?? '').trim();
-    return normalized || `Spotify API request failed (${status})`;
+    const fallbackStatusText = String(statusText ?? '').trim();
+    return normalized || fallbackStatusText || `Spotify API request failed (${status})`;
   }
 
   private async tryResolveSpotifyTokenUserId() {
@@ -436,11 +564,14 @@ export class SpotifyService {
       throw new BadRequestException('Missing playlistId');
     }
 
+    const endpointPath = `/playlists/${encodeURIComponent(
+      normalizedPlaylistId,
+    )}?fields=id,name,images(url)`;
     const playlist = await this.spotifyApiFetch<SpotifyPlaylistSummary>(
-      `/playlists/${encodeURIComponent(normalizedPlaylistId)}?fields=id,name,images(url)`,
+      endpointPath,
       undefined,
       true,
-      { playlistId: normalizedPlaylistId },
+      { playlistId: normalizedPlaylistId, action: 'spotify_meta' },
     );
     return {
       id: String(playlist.id ?? normalizedPlaylistId),
@@ -563,15 +694,16 @@ export class SpotifyService {
     let page: PlaylistTracksSeedSongsPage;
     const songs: QuizSongMinimal[] = [];
     const seenTrackIds = new Set<string>();
+    const endpointPath = `/playlists/${encodeURIComponent(
+      normalizedPlaylistId,
+    )}/tracks?limit=${limit}&offset=0&market=from_token&fields=items(track(id,uri,name,artists(name),album(name,images(url),release_date),duration_ms,preview_url,explicit,popularity)),total,next,limit,offset`;
 
     try {
       page = await this.spotifyApiFetch<PlaylistTracksSeedSongsPage>(
-        `/playlists/${encodeURIComponent(
-          normalizedPlaylistId,
-        )}/tracks?limit=${limit}&offset=0&market=from_token&fields=items(track(id,uri,name,artists(name),album(name,images(url),release_date),duration_ms,preview_url,explicit,popularity)),total`,
+        endpointPath,
         undefined,
         true,
-        { playlistId: normalizedPlaylistId },
+        { playlistId: normalizedPlaylistId, action: 'spotify_tracks' },
       );
     } catch (error) {
       if (error instanceof HttpException && error.getStatus() === 403) {
@@ -806,7 +938,7 @@ export class SpotifyService {
     const path = `/me/player/play${query}`;
 
     try {
-      const response = await this.spotifyApiRequest(path, {
+      const { response } = await this.spotifyApiRequest(path, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
