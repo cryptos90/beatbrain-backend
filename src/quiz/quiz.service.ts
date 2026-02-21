@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { MinimalTrack, SpotifyService } from '../spotify/spotify.service';
-import { buildPoolFromPlaylist } from './poolBuilder';
+import type { QuizSongMinimal } from './types/quizSong';
 
 type AnswerType = 'multiple-choice' | 'binary';
 
@@ -33,22 +33,15 @@ type QuizSession = {
   questionCount: number;
   decadeTag?: string;
   askedCount: number;
+  seedSongs: QuizSongMinimal[];
   poolTrackIds: string[];
   tracksById: Record<string, MinimalTrack>;
   usedTrackIds: Set<string>;
-  poolRefillMeta: {
-    total: number;
-    pageSize: number;
-    pagesFetchedOffsets: Set<number>;
-  };
 };
 
-const MIN_POOL_TRACKS = 30;
+const MIN_POOL_TRACKS = 10;
 const MIN_QUESTION_COUNT = 10;
 const MAX_QUESTION_COUNT = 100;
-const INITIAL_PAGE_SIZE = 50;
-const TARGET_POOL_TRACKS = 120;
-const MAX_POOL_PAGES_FETCHED = 10;
 const MIN_YEAR = 1900;
 
 const QUESTION_POOL: QuestionTemplate[] = [
@@ -134,6 +127,16 @@ export class QuizService {
     return normalized || undefined;
   }
 
+  private getSeedRequestLimit(questionCount: number) {
+    return Math.max(1, Math.min(100, questionCount * 4));
+  }
+
+  private getRequiredSeedPoolSize(questionCount: number) {
+    const requestedLimit = this.getSeedRequestLimit(questionCount);
+    const requiredForQuestions = questionCount + 3;
+    return Math.min(requestedLimit, Math.max(MIN_POOL_TRACKS, requiredForQuestions));
+  }
+
   private addTrackToPool(session: QuizSession, track: MinimalTrack) {
     if (!track.id || !track.uri) {
       return;
@@ -144,32 +147,33 @@ export class QuizService {
     session.tracksById[track.id] = track;
   }
 
-  private totalPlaylistPages(total: number, pageSize: number) {
-    return Math.max(1, Math.ceil(Math.max(0, total) / pageSize));
-  }
-
-  private pickRandomPageOffset(total: number, pageSize: number, usedOffsets: Set<number>) {
-    const pageCount = this.totalPlaylistPages(total, pageSize);
-    if (usedOffsets.size >= pageCount) {
+  private mapQuizSongToMinimalTrack(song: QuizSongMinimal): MinimalTrack | null {
+    const id = String(song.spotifyTrackId ?? '').trim();
+    if (!id) {
       return null;
     }
 
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const pageIndex = Math.floor(Math.random() * pageCount);
-      const offset = pageIndex * pageSize;
-      if (!usedOffsets.has(offset)) {
-        return offset;
-      }
-    }
+    const trackName = String(song.name ?? '').trim();
+    const artistName = String(song.artists?.[0] ?? '').trim();
+    const albumName = String(song.albumName ?? '').trim();
+    const coverUrl = String(song.coverUrl ?? '').trim();
+    const rawReleaseDate = String(song.releaseDate ?? '').trim();
+    const year = /^\d{4}/.test(rawReleaseDate) ? rawReleaseDate.slice(0, 4) : '';
 
-    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
-      const offset = pageIndex * pageSize;
-      if (!usedOffsets.has(offset)) {
-        return offset;
-      }
-    }
-
-    return null;
+    return {
+      id,
+      uri: `spotify:track:${id}`,
+      name: trackName,
+      artistName,
+      albumName,
+      coverUrl,
+      year,
+      explicit: Boolean(song.explicit),
+      popularity:
+        typeof song.popularity === 'number' && Number.isFinite(song.popularity)
+          ? song.popularity
+          : 0,
+    };
   }
 
   private getRemainingTrackIds(session: QuizSession) {
@@ -438,46 +442,49 @@ export class QuizService {
       throw new BadRequestException('Missing playlistId');
     }
 
-    const builtPool = await buildPoolFromPlaylist(this.spotifyService, {
-      playlistId: normalizedPlaylistId,
-      pageSize: INITIAL_PAGE_SIZE,
-      targetPoolSize: TARGET_POOL_TRACKS,
-      minPoolSize: MIN_POOL_TRACKS,
-      maxPagesFetched: MAX_POOL_PAGES_FETCHED,
-    });
-    const pagesFetchedOffsets = new Set<number>(builtPool.pagesFetchedOffsets);
+    const normalizedQuestionCount = this.normalizeQuestionCount(input.questionCount);
+    const requiredSeedPoolSize = this.getRequiredSeedPoolSize(normalizedQuestionCount);
+    const seedSongs = await this.spotifyService.getPlaylistQuizSeedSongs(
+      normalizedPlaylistId,
+      normalizedQuestionCount,
+    );
+    if (seedSongs.length < requiredSeedPoolSize) {
+      throw new BadRequestException(
+        `Not enough tracks in playlist for selected questionCount (required=${requiredSeedPoolSize}, loaded=${seedSongs.length})`,
+      );
+    }
 
     const session: QuizSession = {
       id: randomUUID(),
       playlistId: normalizedPlaylistId,
       createdAt: Date.now(),
-      questionCount: this.normalizeQuestionCount(input.questionCount),
+      questionCount: normalizedQuestionCount,
       decadeTag: this.normalizeDecadeTag(input.decadeTag),
       askedCount: 0,
+      seedSongs,
       poolTrackIds: [],
       tracksById: {},
       usedTrackIds: new Set<string>(),
-      poolRefillMeta: {
-        total: builtPool.total,
-        pageSize: builtPool.pageSize,
-        pagesFetchedOffsets,
-      },
     };
 
-    for (const track of builtPool.tracks) {
+    for (const song of seedSongs) {
+      const track = this.mapQuizSongToMinimalTrack(song);
+      if (!track) {
+        continue;
+      }
       this.addTrackToPool(session, track);
     }
 
-    if (session.poolTrackIds.length < MIN_POOL_TRACKS) {
-      const d = builtPool.diagnostics;
+    if (session.poolTrackIds.length < requiredSeedPoolSize) {
       throw new BadRequestException(
-        `Playlist too small / empty (pool=${session.poolTrackIds.length}, total=${d.total}, items=${d.itemsCount}, nullTrack=${d.nullTrackCount}, local=${d.localTrackCount}, missingId=${d.missingIdOrUriCount}, pages=${d.pagesFetched})`,
+        `Not enough tracks in playlist for selected questionCount (required=${requiredSeedPoolSize}, loaded=${session.poolTrackIds.length})`,
       );
     }
 
-    const d = builtPool.diagnostics;
     this.logger.log(
-      `[pool] playlist=${normalizedPlaylistId} pool=${session.poolTrackIds.length} total=${d.total} pages=${d.pagesFetched} items=${d.itemsCount} nullTrack=${d.nullTrackCount} local=${d.localTrackCount} missingId=${d.missingIdOrUriCount}`,
+      `[pool] playlist=${normalizedPlaylistId} requested=${this.getSeedRequestLimit(
+        normalizedQuestionCount,
+      )} songsLoaded=${seedSongs.length} pool=${session.poolTrackIds.length}`,
     );
 
     this.sessions.set(session.id, session);

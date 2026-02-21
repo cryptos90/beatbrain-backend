@@ -112,7 +112,7 @@ export async function spotifyFetch(
         },
       });
 
-      if (response.status === 401 || response.status === 403) {
+      if (response.status === 401) {
         throw new SpotifyUnauthorizedError(
           `Spotify authorization failed (${response.status})`,
           response.status,
