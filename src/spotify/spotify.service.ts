@@ -16,23 +16,28 @@ export type SpotifyPlaylistSummary = {
   images: { url: string }[];
 };
 
-export type SpotifyPlaylistTrackItem = {
-  track?: {
-    id: string;
-    uri?: string;
-    name: string;
-    preview_url?: string | null;
-    duration_ms?: number;
-    popularity?: number;
-    explicit?: boolean;
-    artists?: { id?: string; name?: string }[];
-    album: {
-      id?: string;
-      name?: string;
-      release_date?: string;
-      images?: { url?: string }[];
-    };
+export type SpotifyPlaylistTrackEntity = {
+  type?: string;
+  id?: string;
+  uri?: string;
+  name?: string;
+  preview_url?: string | null;
+  duration_ms?: number;
+  popularity?: number;
+  explicit?: boolean;
+  artists?: { id?: string; name?: string }[];
+  album?: {
+    id?: string;
+    name?: string;
+    release_date?: string;
+    images?: { url?: string }[];
   };
+};
+
+export type SpotifyPlaylistTrackItem = {
+  item?: SpotifyPlaylistTrackEntity | null;
+  track?: SpotifyPlaylistTrackEntity | null;
+  is_local?: boolean;
 };
 
 export type MinimalTrack = {
@@ -94,19 +99,7 @@ type PlaylistTrackTotalResponse = {
 };
 
 type PlaylistTracksMinimalPage = {
-  items?: Array<{
-    track?: {
-      id?: string;
-      uri?: string;
-      name?: string;
-      artists?: { name?: string }[];
-      album?: {
-        name?: string;
-        release_date?: string;
-        images?: { url?: string }[];
-      };
-    };
-  }>;
+  items?: SpotifyPlaylistTrackItem[];
   total?: number;
   next?: string | null;
 };
@@ -124,7 +117,7 @@ export type SpotifyPlaybackDevice = {
 };
 
 type CachedPlaylistTracks = {
-  tracks: NonNullable<SpotifyPlaylistTrackItem['track']>[];
+  tracks: SpotifyPlaylistTrackEntity[];
   expiresAt: number;
 };
 
@@ -139,11 +132,12 @@ type CachedResolvedPlaylist = {
 
 const PLAYLIST_TRACKS_CACHE_TTL_MS = 60_000;
 const RESOLVE_PLAYLIST_CACHE_TTL_MS = 30_000;
+const PLAYBACK_DEVICE_CACHE_TTL_MS = 5 * 60_000;
 
 type SpotifyRequestContext = {
   playlistId?: string;
   skipForbiddenDiagnostics?: boolean;
-  action?: 'spotify_meta' | 'spotify_tracks';
+  action?: 'spotify_meta' | 'spotify_items';
 };
 
 type PlaylistForbiddenDiagnosis = {
@@ -164,9 +158,10 @@ export class SpotifyService {
   private readonly logger = new Logger(SpotifyService.name);
   private readonly playlistTracksCache = new Map<string, CachedPlaylistTracks>();
   private readonly resolvePlaylistCache = new Map<string, CachedResolvedPlaylist>();
+  private playbackDeviceCache: { id: string; expiresAt: number } | null = null;
   private readonly playlistTracksInFlight = new Map<
     string,
-    Promise<NonNullable<SpotifyPlaylistTrackItem['track']>[]>
+    Promise<SpotifyPlaylistTrackEntity[]>
   >();
 
   constructor(private readonly authService: AuthService) {}
@@ -221,6 +216,21 @@ export class SpotifyService {
     } catch {
       return pathOrUrl;
     }
+  }
+
+  private buildPlaylistItemsEndpoint(playlistId: string, query: string) {
+    const normalizedQuery = String(query ?? '').trim();
+    const querySuffix = normalizedQuery ? `?${normalizedQuery}` : '';
+    return `/playlists/${encodeURIComponent(playlistId)}/items${querySuffix}`;
+  }
+
+  private async fetchPlaylistItems<T>(
+    playlistId: string,
+    query: string,
+    context?: SpotifyRequestContext,
+  ): Promise<T> {
+    const endpoint = this.buildPlaylistItemsEndpoint(playlistId, query);
+    return this.spotifyApiFetch<T>(endpoint, undefined, true, context);
   }
 
   private logSpotifyCallStart(
@@ -475,6 +485,43 @@ export class SpotifyService {
     };
   }
 
+  private buildPlaylistForbiddenHttpException(
+    playlistId: string,
+    diagnosis: PlaylistForbiddenDiagnosis,
+    fallbackMessage?: string,
+  ) {
+    const reason = String(diagnosis.reason ?? '').trim();
+    const spotifyMessage = diagnosis.spotifyMessage ?? fallbackMessage;
+    const basePayload = {
+      reason,
+      spotifyStatus: 403,
+      spotifyMessage,
+      tokenUserId: diagnosis.tokenUserId,
+      playlistOwnerId: diagnosis.playlistOwnerId,
+      playlistId,
+    };
+
+    if (reason === 'ACCOUNT_MISMATCH' || reason === 'INSUFFICIENT_SCOPE') {
+      return new HttpException(
+        {
+          statusCode: 409,
+          message: 'Spotify re-auth required',
+          ...basePayload,
+        },
+        409,
+      );
+    }
+
+    return new HttpException(
+      {
+        statusCode: 403,
+        message: spotifyMessage || 'Spotify playlist access forbidden',
+        ...basePayload,
+      },
+      403,
+    );
+  }
+
   private async tryResolvePlaylistOwnerId(playlistId: string) {
     const normalizedPlaylistId = String(playlistId ?? '').trim();
     if (!normalizedPlaylistId) {
@@ -608,31 +655,47 @@ export class SpotifyService {
   }
 
   private async fetchAllPlaylistTracksUncached(playlistId: string) {
-    let url: string | null = `/playlists/${encodeURIComponent(
-      playlistId,
-    )}/tracks?limit=100&fields=items(track(id,name,preview_url,popularity,explicit,artists(name),album(name,release_date,images(url)))),next`;
+    const query =
+      'limit=100&fields=items(item(type,id,uri,name,preview_url,duration_ms,popularity,explicit,artists(name),album(name,release_date,images(url)))),next';
     const allItems: SpotifyPlaylistTrackItem[] = [];
+    let page = await this.fetchPlaylistItems<PlaylistTracksPage>(playlistId, query, {
+      playlistId,
+    });
 
-    while (url) {
-      const page = await this.spotifyApiFetch<PlaylistTracksPage>(
-        url,
-        undefined,
-        true,
-        { playlistId },
-      );
+    while (true) {
       allItems.push(...(page.items ?? []));
-      url = page.next;
+      const nextUrl = String(page.next ?? '').trim();
+      if (!nextUrl) {
+        break;
+      }
+      page = await this.spotifyApiFetch<PlaylistTracksPage>(nextUrl, undefined, true, {
+        playlistId,
+      });
     }
 
     return allItems
-      .map((item) => item.track)
-      .filter((track): track is NonNullable<typeof track> => Boolean(track?.id));
+      .map((item) => this.resolvePlaylistTrackEntity(item))
+      .filter((track): track is SpotifyPlaylistTrackEntity => Boolean(track?.id));
+  }
+
+  private resolvePlaylistTrackEntity(item: SpotifyPlaylistTrackItem): SpotifyPlaylistTrackEntity | null {
+    const candidate = item?.item ?? item?.track ?? null;
+    if (!candidate) {
+      return null;
+    }
+
+    const type = String(candidate.type ?? '').trim().toLowerCase();
+    if (type && type !== 'track') {
+      return null;
+    }
+
+    return candidate;
   }
 
   mapPlaylistTrackItemToQuizSongMinimal(
     item: SpotifyPlaylistTrackItem,
   ): QuizSongMinimal | null {
-    const track = item?.track;
+    const track = this.resolvePlaylistTrackEntity(item);
     if (!track) {
       return null;
     }
@@ -694,16 +757,15 @@ export class SpotifyService {
     let page: PlaylistTracksSeedSongsPage;
     const songs: QuizSongMinimal[] = [];
     const seenTrackIds = new Set<string>();
-    const endpointPath = `/playlists/${encodeURIComponent(
-      normalizedPlaylistId,
-    )}/tracks?limit=${limit}&offset=0&market=from_token&fields=items(track(id,uri,name,artists(name),album(name,images(url),release_date),duration_ms,preview_url,explicit,popularity)),total,next,limit,offset`;
+    const query =
+      `limit=${limit}&offset=0&market=from_token&` +
+      'fields=items(item(type,id,uri,name,artists(name),album(name,images(url),release_date),duration_ms,preview_url,explicit,popularity)),total,next,limit,offset';
 
     try {
-      page = await this.spotifyApiFetch<PlaylistTracksSeedSongsPage>(
-        endpointPath,
-        undefined,
-        true,
-        { playlistId: normalizedPlaylistId, action: 'spotify_tracks' },
+      page = await this.fetchPlaylistItems<PlaylistTracksSeedSongsPage>(
+        normalizedPlaylistId,
+        query,
+        { playlistId: normalizedPlaylistId, action: 'spotify_items' },
       );
     } catch (error) {
       if (error instanceof HttpException && error.getStatus() === 403) {
@@ -712,18 +774,10 @@ export class SpotifyService {
           normalizedPlaylistId,
           extractedMessage,
         );
-        throw new HttpException(
-          {
-            statusCode: 409,
-            message: 'Spotify re-auth required',
-            reason: diagnose.reason,
-            spotifyStatus: 403,
-            spotifyMessage: diagnose.spotifyMessage ?? extractedMessage,
-            tokenUserId: diagnose.tokenUserId,
-            playlistOwnerId: diagnose.playlistOwnerId,
-            playlistId: normalizedPlaylistId,
-          },
-          409,
+        throw this.buildPlaylistForbiddenHttpException(
+          normalizedPlaylistId,
+          diagnose,
+          extractedMessage,
         );
       }
       throw error;
@@ -772,18 +826,10 @@ export class SpotifyService {
           normalizedPlaylistId,
           extractedMessage,
         );
-        throw new HttpException(
-          {
-            statusCode: 409,
-            message: 'Spotify re-auth required',
-            reason: diagnose.reason,
-            spotifyStatus: 403,
-            spotifyMessage: diagnose.spotifyMessage ?? extractedMessage,
-            tokenUserId: diagnose.tokenUserId,
-            playlistOwnerId: diagnose.playlistOwnerId,
-            playlistId: normalizedPlaylistId,
-          },
-          409,
+        throw this.buildPlaylistForbiddenHttpException(
+          normalizedPlaylistId,
+          diagnose,
+          extractedMessage,
         );
       }
       throw error;
@@ -803,15 +849,15 @@ export class SpotifyService {
 
     const safeOffset = Math.max(0, Math.floor(offset));
     const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+    const query =
+      `limit=${safeLimit}&offset=${safeOffset}&market=from_token&` +
+      'fields=items(item(type,id,uri,name,artists(name),album(name,release_date,images(url)))),total,next';
 
     let page: PlaylistTracksMinimalPage;
     try {
-      page = await this.spotifyApiFetch<PlaylistTracksMinimalPage>(
-        `/playlists/${encodeURIComponent(
-          normalizedPlaylistId,
-        )}/tracks?limit=${safeLimit}&offset=${safeOffset}&market=from_token&fields=items(track(id,uri,name,artists(name),album(name,release_date,images(url)))),total,next`,
-        undefined,
-        true,
+      page = await this.fetchPlaylistItems<PlaylistTracksMinimalPage>(
+        normalizedPlaylistId,
+        query,
         { playlistId: normalizedPlaylistId },
       );
     } catch (error) {
@@ -821,18 +867,10 @@ export class SpotifyService {
           normalizedPlaylistId,
           extractedMessage,
         );
-        throw new HttpException(
-          {
-            statusCode: 409,
-            message: 'Spotify re-auth required',
-            reason: diagnose.reason,
-            spotifyStatus: 403,
-            spotifyMessage: diagnose.spotifyMessage ?? extractedMessage,
-            tokenUserId: diagnose.tokenUserId,
-            playlistOwnerId: diagnose.playlistOwnerId,
-            playlistId: normalizedPlaylistId,
-          },
-          409,
+        throw this.buildPlaylistForbiddenHttpException(
+          normalizedPlaylistId,
+          diagnose,
+          extractedMessage,
         );
       }
       throw error;
@@ -849,7 +887,7 @@ export class SpotifyService {
     stats.itemsCount = items.length;
 
     for (const item of items) {
-      const track = item?.track;
+      const track = this.resolvePlaylistTrackEntity(item);
       if (!track) {
         stats.nullTrackCount += 1;
         continue;
@@ -899,55 +937,139 @@ export class SpotifyService {
     }));
   }
 
+  private getCachedPlaybackDeviceId() {
+    if (!this.playbackDeviceCache) {
+      return null;
+    }
+
+    if (Date.now() >= this.playbackDeviceCache.expiresAt) {
+      this.playbackDeviceCache = null;
+      return null;
+    }
+
+    const normalizedId = String(this.playbackDeviceCache.id ?? '').trim();
+    if (!normalizedId) {
+      this.playbackDeviceCache = null;
+      return null;
+    }
+
+    return normalizedId;
+  }
+
+  private setCachedPlaybackDeviceId(deviceId: string) {
+    const normalizedId = String(deviceId ?? '').trim();
+    if (!normalizedId) {
+      return;
+    }
+
+    this.playbackDeviceCache = {
+      id: normalizedId,
+      expiresAt: Date.now() + PLAYBACK_DEVICE_CACHE_TTL_MS,
+    };
+  }
+
+  private clearCachedPlaybackDeviceId() {
+    this.playbackDeviceCache = null;
+  }
+
+  private normalizePlaybackDeviceResolutionError(error: unknown) {
+    if (error instanceof HttpException && error.getStatus() === 401) {
+      throw new UnauthorizedException('Spotify authorization failed. Please login again.');
+    }
+    if (error instanceof HttpException && error.getStatus() === 403) {
+      throw new HttpException(
+        {
+          statusCode: 403,
+          message: 'Playback requires Spotify Premium / missing scope.',
+        },
+        403,
+      );
+    }
+    throw error;
+  }
+
+  private async resolvePlaybackDeviceId(forceRefresh = false) {
+    if (!forceRefresh) {
+      const cached = this.getCachedPlaybackDeviceId();
+      if (cached) {
+        return cached;
+      }
+    }
+
+    const devices = await this.getDevices();
+    const preferred =
+      devices.find((device) => device.is_active) ??
+      devices.find((device) => !device.is_restricted);
+    const nextDeviceId = String(preferred?.id ?? '').trim();
+
+    if (nextDeviceId) {
+      this.setCachedPlaybackDeviceId(nextDeviceId);
+      return nextDeviceId;
+    }
+
+    this.clearCachedPlaybackDeviceId();
+    return '';
+  }
+
+  private async sendPlaybackStartRequest(trackUri: string, deviceId: string) {
+    const query = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : '';
+    const path = `/me/player/play${query}`;
+
+    const { response } = await this.spotifyApiRequest(path, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        uris: [trackUri],
+        position_ms: 0,
+      }),
+    });
+
+    return response;
+  }
+
   async startPlayback(trackUri: string, deviceId?: string) {
     const normalizedTrackUri = String(trackUri ?? '').trim();
     if (!normalizedTrackUri) {
       throw new BadRequestException('Missing track URI');
     }
 
-    let resolvedDeviceId = String(deviceId ?? '').trim();
+    const explicitDeviceId = String(deviceId ?? '').trim();
+    let resolvedDeviceId = explicitDeviceId;
+    if (explicitDeviceId) {
+      this.setCachedPlaybackDeviceId(explicitDeviceId);
+    }
+
     if (!resolvedDeviceId) {
       try {
-        const devices = await this.getDevices();
-        const preferred =
-          devices.find((device) => device.is_active) ??
-          devices.find((device) => !device.is_restricted);
-        if (preferred?.id) {
-          resolvedDeviceId = preferred.id;
-        }
+        resolvedDeviceId = await this.resolvePlaybackDeviceId(false);
       } catch (error) {
-        if (error instanceof HttpException && error.getStatus() === 401) {
-          throw new UnauthorizedException('Spotify authorization failed. Please login again.');
-        }
-        if (error instanceof HttpException && error.getStatus() === 403) {
-          throw new HttpException(
-            {
-              statusCode: 403,
-              message: 'Playback requires Spotify Premium / missing scope.',
-            },
-            403,
-          );
-        }
-        throw error;
+        this.normalizePlaybackDeviceResolutionError(error);
       }
     }
 
-    const query = resolvedDeviceId
-      ? `?device_id=${encodeURIComponent(resolvedDeviceId)}`
-      : '';
-    const path = `/me/player/play${query}`;
-
     try {
-      const { response } = await this.spotifyApiRequest(path, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          uris: [normalizedTrackUri],
-          position_ms: 0,
-        }),
-      });
+      let response = await this.sendPlaybackStartRequest(
+        normalizedTrackUri,
+        resolvedDeviceId,
+      );
+
+      if (response.status === 404 && !explicitDeviceId) {
+        this.clearCachedPlaybackDeviceId();
+        try {
+          const refreshedDeviceId = await this.resolvePlaybackDeviceId(true);
+          if (refreshedDeviceId) {
+            resolvedDeviceId = refreshedDeviceId;
+            response = await this.sendPlaybackStartRequest(
+              normalizedTrackUri,
+              resolvedDeviceId,
+            );
+          }
+        } catch (error) {
+          this.normalizePlaybackDeviceResolutionError(error);
+        }
+      }
 
       if (response.status === 404) {
         throw new HttpException(
@@ -997,6 +1119,10 @@ export class SpotifyService {
           },
           response.status,
         );
+      }
+
+      if (resolvedDeviceId) {
+        this.setCachedPlaybackDeviceId(resolvedDeviceId);
       }
 
       return {

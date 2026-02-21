@@ -153,10 +153,9 @@ export class DevSpotifyController {
       return playlistInfo;
     }
 
+    const sampleQuery = 'limit=5&fields=items(item(type,name,artists(name)))';
     const trackSample = await this.spotifyRequest(
-      `/playlists/${encodeURIComponent(
-        playlistId,
-      )}/tracks?limit=5&fields=items(track(name,artists(name)))`,
+      `/playlists/${encodeURIComponent(playlistId)}/items?${sampleQuery}`,
     );
     if (this.isSpotifyErrorResult(trackSample)) {
       return trackSample;
@@ -165,9 +164,9 @@ export class DevSpotifyController {
     const sampleTracks = Array.isArray(trackSample.json?.items)
       ? trackSample.json.items
           .map((item: any) => ({
-            name: String(item?.track?.name ?? ''),
-            artists: Array.isArray(item?.track?.artists)
-              ? item.track.artists
+            name: String(item?.item?.name ?? ''),
+            artists: Array.isArray(item?.item?.artists)
+              ? item.item.artists
                   .map((artist: any) => String(artist?.name ?? '').trim())
                   .filter(Boolean)
               : [],
