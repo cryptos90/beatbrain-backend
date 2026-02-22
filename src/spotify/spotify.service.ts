@@ -719,6 +719,9 @@ export class SpotifyService {
     const albumImageUrl = String(track.album?.images?.[0]?.url ?? '').trim();
     const albumName = String(track.album?.name ?? '').trim();
     const releaseDate = String(track.album?.release_date ?? '').trim();
+    const parsedReleaseYear = /^\d{4}/.test(releaseDate)
+      ? Number.parseInt(releaseDate.slice(0, 4), 10)
+      : null;
     const previewUrl = String(track.preview_url ?? '').trim();
     const explicit = track.explicit;
     const popularity = track.popularity;
@@ -730,6 +733,9 @@ export class SpotifyService {
       albumName,
       ...(albumImageUrl ? { coverUrl: albumImageUrl } : {}),
       ...(releaseDate ? { releaseDate } : {}),
+      ...(typeof parsedReleaseYear === 'number' && Number.isFinite(parsedReleaseYear)
+        ? { releaseYear: parsedReleaseYear }
+        : {}),
       durationMs:
         typeof track.duration_ms === 'number' && Number.isFinite(track.duration_ms)
           ? Math.max(0, Math.floor(track.duration_ms))

@@ -8,7 +8,22 @@ import { randomUUID } from 'crypto';
 import { MinimalTrack, SpotifyService } from '../spotify/spotify.service';
 import type { QuizSongMinimal } from './types/quizSong';
 
-type AnswerType = 'multiple-choice' | 'binary';
+type AnswerType = 'multiple-choice' | 'binary' | 'year-input';
+
+type QuestionFormat = 'options' | 'year_input';
+
+type YearInputPayload = {
+  toleranceYears: number;
+  correctYear: number;
+};
+
+type BuiltQuestion = {
+  correctAnswer: string;
+  wrongAnswers: string[];
+  options: string[];
+  format: QuestionFormat;
+  payload?: YearInputPayload;
+};
 
 type QuestionKind =
   | 'song-title'
@@ -47,7 +62,7 @@ const MIN_YEAR = 1900;
 const QUESTION_POOL: QuestionTemplate[] = [
   {
     kind: 'song-title',
-    questionText: 'Wie heisst der Song?',
+    questionText: 'Wie ist der Titel des Songs?',
     answerFieldPath: 'name',
     answerType: 'multiple-choice',
   },
@@ -71,19 +86,19 @@ const QUESTION_POOL: QuestionTemplate[] = [
   },
   {
     kind: 'year-pm2',
-    questionText: 'Welches Jahr passt (+/- 2 Jahre)?',
+    questionText: 'In welchem Jahr erschien der Song? \n(+/- 2 Jahre)',
     answerFieldPath: 'year',
-    answerType: 'multiple-choice',
+    answerType: 'year-input',
   },
   {
     kind: 'year-pm4',
-    questionText: 'Welches Jahr passt (+/- 4 Jahre)?',
+    questionText: 'In welchem Jahr erschien der Song? \n(+/- 4 Jahre)',
     answerFieldPath: 'year',
-    answerType: 'multiple-choice',
+    answerType: 'year-input',
   },
   {
     kind: 'before-after-2000',
-    questionText: 'Erschien der Song vor oder ab 2000?',
+    questionText: 'Erschien der Song vor oder nach 2000?',
     answerFieldPath: 'year',
     answerType: 'binary',
   },
@@ -157,8 +172,19 @@ export class QuizService {
     const artistName = String(song.artists?.[0] ?? '').trim();
     const albumName = String(song.albumName ?? '').trim();
     const coverUrl = String(song.coverUrl ?? '').trim();
+    const releaseYearFromDto =
+      typeof song.releaseYear === 'number' && Number.isFinite(song.releaseYear)
+        ? Math.floor(song.releaseYear)
+        : null;
     const rawReleaseDate = String(song.releaseDate ?? '').trim();
-    const year = /^\d{4}/.test(rawReleaseDate) ? rawReleaseDate.slice(0, 4) : '';
+    const yearFromDate = /^\d{4}/.test(rawReleaseDate)
+      ? Number.parseInt(rawReleaseDate.slice(0, 4), 10)
+      : null;
+    const resolvedYear = releaseYearFromDto ?? yearFromDate;
+    const year =
+      typeof resolvedYear === 'number' && Number.isFinite(resolvedYear)
+        ? String(resolvedYear)
+        : '';
 
     return {
       id,
@@ -365,21 +391,23 @@ export class QuizService {
     track: MinimalTrack,
     correctSongId: string,
     template: QuestionTemplate,
-  ) {
+  ): BuiltQuestion | null {
     if (template.kind === 'before-after-2000') {
       const year = this.parseYearFromTrack(track.year);
       if (year === null) {
         return null;
       }
 
-      const correctAnswer = year < 2000 ? 'vor 2000' : 'ab 2000';
-      const wrongAnswer = correctAnswer === 'vor 2000' ? 'ab 2000' : 'vor 2000';
+      const correctAnswer = year < 2000 ? 'vor 2000' : 'nach 2000';
+      const wrongAnswer =
+        correctAnswer === 'vor 2000' ? 'nach 2000' : 'vor 2000';
       const options = shuffle([correctAnswer, wrongAnswer]);
 
       return {
         correctAnswer,
         wrongAnswers: [wrongAnswer],
         options,
+        format: 'options',
       };
     }
 
@@ -389,14 +417,21 @@ export class QuizService {
         return null;
       }
 
-      const mode =
-        template.kind === 'year-pm2'
-          ? 'pm2'
-          : template.kind === 'year-pm4'
-            ? 'pm4'
-            : 'normal';
+      if (template.kind === 'year-pm2' || template.kind === 'year-pm4') {
+        const toleranceYears = template.kind === 'year-pm2' ? 2 : 4;
+        return {
+          correctAnswer: String(year),
+          wrongAnswers: [],
+          options: [],
+          format: 'year_input',
+          payload: {
+            toleranceYears,
+            correctYear: year,
+          },
+        };
+      }
 
-      const options = this.buildYearOptions(year, mode);
+      const options = this.buildYearOptions(year, 'normal');
       const correctAnswer = String(year);
 
       if (!options.includes(correctAnswer) || options.length < 4) {
@@ -407,6 +442,7 @@ export class QuizService {
         correctAnswer,
         wrongAnswers: options.filter((value) => value !== correctAnswer),
         options,
+        format: 'options',
       };
     }
 
@@ -429,6 +465,7 @@ export class QuizService {
       correctAnswer,
       wrongAnswers,
       options: shuffle([correctAnswer, ...wrongAnswers]).slice(0, 4),
+      format: 'options',
     };
   }
 
@@ -563,6 +600,8 @@ export class QuizService {
               questionText: template.questionText,
               answerFieldPath: template.answerFieldPath,
               answerType: template.answerType,
+              format: builtQuestion.format,
+              ...(builtQuestion.payload ? { payload: builtQuestion.payload } : {}),
             },
             correctSongId,
             correctTrackUri: track.uri,

@@ -409,7 +409,7 @@ export class AuthService {
       code_challenge_method: 'S256',
       code_challenge: codeChallenge,
       scope:
-        'user-read-private user-read-email playlist-read-private playlist-read-collaborative user-modify-playback-state user-read-playback-state user-read-currently-playing',
+        'user-read-private user-read-email playlist-read-private playlist-read-collaborative user-modify-playback-state user-read-playback-state user-read-currently-playing app-remote-control',
     });
 
     return {
@@ -613,6 +613,21 @@ export class AuthService {
 
   async forceRefreshAfterUnauthorized() {
     return this.refreshSpotifyAccessToken();
+  }
+
+  async getSpotifyAccessTokenForSdk(authorizationHeader?: string) {
+    this.verifyHostJwtOrThrow(authorizationHeader);
+    const accessToken = await this.getValidHostSpotifyAccessToken();
+    const expiresAt = this.hostSession?.accessTokenExpiresAt ?? Date.now();
+    const expiresIn = Math.max(
+      1,
+      Math.floor((expiresAt - Date.now()) / 1000),
+    );
+
+    return {
+      accessToken,
+      expiresIn,
+    };
   }
 
   hasHostSessionForDev() {

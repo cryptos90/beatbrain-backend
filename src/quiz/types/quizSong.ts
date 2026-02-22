@@ -5,6 +5,7 @@ export type QuizSongMinimal = {
   albumName: string;
   coverUrl?: string;
   releaseDate?: string;
+  releaseYear?: number;
   durationMs: number;
   previewUrl?: string;
   explicit?: boolean;
