@@ -48,4 +48,13 @@ export class SpotifyController {
     this.authService.verifyHostJwtOrThrow(authorizationHeader);
     return this.spotifyService.startPlayback(body.trackUri ?? '', body.deviceId);
   }
+
+  @Post('playback/pause')
+  async pausePlayback(
+    @Headers('authorization') authorizationHeader: string | undefined,
+    @Body() body: { deviceId?: string },
+  ) {
+    this.authService.verifyHostJwtOrThrow(authorizationHeader);
+    return this.spotifyService.pausePlayback(body.deviceId);
+  }
 }

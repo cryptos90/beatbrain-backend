@@ -158,6 +158,7 @@ export class SpotifyService {
   private readonly logger = new Logger(SpotifyService.name);
   private readonly playlistTracksCache = new Map<string, CachedPlaylistTracks>();
   private readonly resolvePlaylistCache = new Map<string, CachedResolvedPlaylist>();
+  private readonly lastSeedOffsetByPlaylist = new Map<string, number>();
   private playbackDeviceCache: { id: string; expiresAt: number } | null = null;
   private readonly playlistTracksInFlight = new Map<
     string,
@@ -759,12 +760,39 @@ export class SpotifyService {
       ? Math.max(1, Math.floor(questionCount))
       : 1;
     const limit = Math.max(1, Math.min(100, safeQuestionCount * 4));
+    const totalTracks = await this.getPlaylistTrackTotal(normalizedPlaylistId);
+    const maxOffset = Math.max(0, totalTracks - limit);
+    const candidateOffsets: number[] = [];
+    if (maxOffset <= 0) {
+      candidateOffsets.push(0);
+    } else {
+      for (let offset = 0; offset <= maxOffset; offset += limit) {
+        candidateOffsets.push(offset);
+      }
+      if (candidateOffsets[candidateOffsets.length - 1] !== maxOffset) {
+        candidateOffsets.push(maxOffset);
+      }
+    }
+    let randomOffset =
+      candidateOffsets[Math.floor(Math.random() * candidateOffsets.length)] ?? 0;
+    const lastOffset = this.lastSeedOffsetByPlaylist.get(normalizedPlaylistId);
+    if (
+      candidateOffsets.length > 1 &&
+      typeof lastOffset === 'number' &&
+      Number.isFinite(lastOffset) &&
+      randomOffset === lastOffset
+    ) {
+      const alternatives = candidateOffsets.filter((value) => value !== lastOffset);
+      randomOffset =
+        alternatives[Math.floor(Math.random() * alternatives.length)] ?? randomOffset;
+    }
+    this.lastSeedOffsetByPlaylist.set(normalizedPlaylistId, randomOffset);
 
     let page: PlaylistTracksSeedSongsPage;
     const songs: QuizSongMinimal[] = [];
     const seenTrackIds = new Set<string>();
     const query =
-      `limit=${limit}&offset=0&market=from_token&` +
+      `limit=${limit}&offset=${randomOffset}&market=from_token&` +
       'fields=items(item(type,id,uri,name,artists(name),album(name,images(url),release_date),duration_ms,preview_url,explicit,popularity)),total,next,limit,offset';
 
     try {
@@ -803,8 +831,8 @@ export class SpotifyService {
     }
 
     this.logger.log(
-      `[seed-load] playlist=${normalizedPlaylistId} requested=${limit} loaded=${songs.length} total=${Number(
-        page.total ?? 0,
+      `[seed-load] playlist=${normalizedPlaylistId} requested=${limit} offset=${randomOffset} loaded=${songs.length} total=${Number(
+        page.total ?? totalTracks ?? 0,
       )}`,
     );
 
@@ -1033,6 +1061,124 @@ export class SpotifyService {
     });
 
     return response;
+  }
+
+  private async sendPlaybackPauseRequest(deviceId: string) {
+    const query = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : '';
+    const path = `/me/player/pause${query}`;
+
+    const { response } = await this.spotifyApiRequest(path, {
+      method: 'PUT',
+    });
+
+    return response;
+  }
+
+  async pausePlayback(deviceId?: string) {
+    const explicitDeviceId = String(deviceId ?? '').trim();
+    let resolvedDeviceId = explicitDeviceId;
+    if (explicitDeviceId) {
+      this.setCachedPlaybackDeviceId(explicitDeviceId);
+    }
+
+    if (!resolvedDeviceId) {
+      try {
+        resolvedDeviceId = await this.resolvePlaybackDeviceId(false);
+      } catch (error) {
+        this.normalizePlaybackDeviceResolutionError(error);
+      }
+    }
+
+    try {
+      let response = await this.sendPlaybackPauseRequest(resolvedDeviceId);
+
+      if (response.status === 404 && !explicitDeviceId) {
+        this.clearCachedPlaybackDeviceId();
+        try {
+          const refreshedDeviceId = await this.resolvePlaybackDeviceId(true);
+          if (refreshedDeviceId) {
+            resolvedDeviceId = refreshedDeviceId;
+            response = await this.sendPlaybackPauseRequest(resolvedDeviceId);
+          }
+        } catch (error) {
+          this.normalizePlaybackDeviceResolutionError(error);
+        }
+      }
+
+      if (response.status === 404) {
+        return {
+          ok: true,
+          paused: false,
+          deviceId: resolvedDeviceId || null,
+        };
+      }
+
+      if (response.status === 403) {
+        throw new HttpException(
+          {
+            statusCode: 403,
+            message: 'Playback requires Spotify Premium / missing scope.',
+          },
+          403,
+        );
+      }
+
+      if (response.status === 401) {
+        throw new UnauthorizedException('Spotify authorization failed. Please login again.');
+      }
+
+      if (response.status === 429) {
+        const retryAfterSeconds = this.parseRetryAfterSeconds(response);
+        throw new HttpException(
+          {
+            statusCode: 429,
+            message: 'Spotify API rate limit reached',
+            retryAfterSeconds,
+          },
+          429,
+        );
+      }
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as Record<string, any>;
+        throw new HttpException(
+          {
+            statusCode: response.status,
+            message:
+              payload?.error?.message ??
+              payload?.message ??
+              `Spotify playback pause request failed (${response.status})`,
+          },
+          response.status,
+        );
+      }
+
+      if (resolvedDeviceId) {
+        this.setCachedPlaybackDeviceId(resolvedDeviceId);
+      }
+
+      return {
+        ok: true,
+        paused: true,
+        deviceId: resolvedDeviceId || null,
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        if (error.getStatus() === 403) {
+          throw new HttpException(
+            {
+              statusCode: 403,
+              message: 'Playback requires Spotify Premium / missing scope.',
+            },
+            403,
+          );
+        }
+      }
+      if (error instanceof UnauthorizedException) {
+        throw new UnauthorizedException('Spotify authorization failed. Please login again.');
+      }
+      throw error;
+    }
   }
 
   async startPlayback(trackUri: string, deviceId?: string) {
