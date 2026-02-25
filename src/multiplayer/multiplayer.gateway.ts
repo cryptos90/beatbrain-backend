@@ -38,6 +38,7 @@ type PlayerJoinBody = {
   joinCode: string;
   name: string;
   avatarDataUrl: string;
+  playerSessionId?: string;
 };
 
 type PlayerAnswerBody = {
@@ -47,6 +48,19 @@ type PlayerAnswerBody = {
 
 type PlayerContinueBody = {
   joinCode: string;
+};
+
+type PlayerLeaveBody = {
+  joinCode: string;
+  playerSessionId?: string;
+};
+
+type RoundRevealContext = {
+  correctAnswer: string;
+  answerType?: string;
+  format?: string;
+  toleranceYears?: number;
+  correctYear?: number;
 };
 
 @WebSocketGateway({
@@ -60,6 +74,11 @@ export class MultiplayerGateway {
   server!: Server;
 
   private readonly roundTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly lobbyQuizSessionIds = new Map<string, string>();
+  private readonly lobbyRoundRevealContexts = new Map<string, RoundRevealContext>();
+  private readonly autoAdvanceInFlight = new Set<string>();
+  private readonly disconnectedPlayerTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly playerDisconnectGraceMs = 90_000;
 
   constructor(
     private readonly authService: AuthService,
@@ -69,15 +88,134 @@ export class MultiplayerGateway {
   ) {}
 
   handleDisconnect(client: Socket) {
-    this.multiplayerService.removePlayer(client.id);
+    const disconnectedPlayers = this.multiplayerService.markPlayerDisconnected(client.id);
+    for (const disconnected of disconnectedPlayers) {
+      this.broadcastLobby(disconnected.joinCode);
+      this.scheduleDisconnectedPlayerCleanup(
+        disconnected.joinCode,
+        disconnected.playerSessionId,
+      );
+    }
+
     const removedHostLobbies = this.multiplayerService.removeHostLobby(client.id);
     for (const joinCode of removedHostLobbies) {
       this.clearRoundTimer(joinCode);
+      this.clearLobbyRoundState(joinCode);
+      this.cleanupQuizSessionForLobby(joinCode);
+      this.clearDisconnectedPlayerCleanupForLobby(joinCode);
     }
   }
 
   private normalizeJoinCode(joinCode: string) {
     return String(joinCode ?? '').trim().toUpperCase();
+  }
+
+  private disconnectedPlayerTimerKey(joinCode: string, playerSessionId: string) {
+    return `${this.normalizeJoinCode(joinCode)}:${String(playerSessionId ?? '').trim()}`;
+  }
+
+  private cancelDisconnectedPlayerCleanup(joinCode: string, playerSessionId: string) {
+    const timerKey = this.disconnectedPlayerTimerKey(joinCode, playerSessionId);
+    const timerHandle = this.disconnectedPlayerTimers.get(timerKey);
+    if (!timerHandle) {
+      return;
+    }
+    clearTimeout(timerHandle);
+    this.disconnectedPlayerTimers.delete(timerKey);
+  }
+
+  private scheduleDisconnectedPlayerCleanup(joinCode: string, playerSessionId: string) {
+    const normalizedJoinCode = this.normalizeJoinCode(joinCode);
+    const normalizedPlayerSessionId = String(playerSessionId ?? '').trim();
+    if (!normalizedPlayerSessionId) {
+      return;
+    }
+
+    this.cancelDisconnectedPlayerCleanup(normalizedJoinCode, normalizedPlayerSessionId);
+
+    const timerKey = this.disconnectedPlayerTimerKey(
+      normalizedJoinCode,
+      normalizedPlayerSessionId,
+    );
+    const timerHandle = setTimeout(() => {
+      this.disconnectedPlayerTimers.delete(timerKey);
+      this.cleanupDisconnectedPlayer(normalizedJoinCode, normalizedPlayerSessionId);
+    }, this.playerDisconnectGraceMs);
+
+    this.disconnectedPlayerTimers.set(timerKey, timerHandle);
+  }
+
+  private clearDisconnectedPlayerCleanupForLobby(joinCode: string) {
+    const normalizedJoinCode = this.normalizeJoinCode(joinCode);
+    const keyPrefix = `${normalizedJoinCode}:`;
+    for (const [timerKey, timerHandle] of this.disconnectedPlayerTimers.entries()) {
+      if (!timerKey.startsWith(keyPrefix)) {
+        continue;
+      }
+      clearTimeout(timerHandle);
+      this.disconnectedPlayerTimers.delete(timerKey);
+    }
+  }
+
+  private cleanupDisconnectedPlayer(joinCode: string, playerSessionId: string) {
+    const normalizedJoinCode = this.normalizeJoinCode(joinCode);
+    const normalizedPlayerSessionId = String(playerSessionId ?? '').trim();
+    if (!normalizedPlayerSessionId) {
+      return;
+    }
+
+    let removed = false;
+    try {
+      const result = this.multiplayerService.removeDisconnectedPlayer(
+        normalizedJoinCode,
+        normalizedPlayerSessionId,
+      );
+      removed = result.removed;
+    } catch {
+      return;
+    }
+
+    if (!removed) {
+      return;
+    }
+
+    this.broadcastLobby(normalizedJoinCode);
+    this.abortSessionIfNoPlayers(normalizedJoinCode);
+  }
+
+  private cleanupQuizSessionForLobby(joinCode: string) {
+    const normalizedJoinCode = this.normalizeJoinCode(joinCode);
+    const quizSessionId = this.lobbyQuizSessionIds.get(normalizedJoinCode);
+    if (!quizSessionId) {
+      return;
+    }
+
+    this.lobbyQuizSessionIds.delete(normalizedJoinCode);
+    this.quizService.deleteSession(quizSessionId);
+  }
+
+  private abortSessionIfNoPlayers(joinCode: string) {
+    const normalizedJoinCode = this.normalizeJoinCode(joinCode);
+    let lobby;
+    try {
+      lobby = this.multiplayerService.getLobby(normalizedJoinCode);
+    } catch {
+      return;
+    }
+
+    if (lobby.players.size > 0) {
+      return;
+    }
+
+    this.clearRoundTimer(normalizedJoinCode);
+    this.clearLobbyRoundState(normalizedJoinCode);
+    this.clearDisconnectedPlayerCleanupForLobby(normalizedJoinCode);
+    this.cleanupQuizSessionForLobby(normalizedJoinCode);
+
+    const menuLobby = this.multiplayerService.clearToMenu(normalizedJoinCode);
+    const publicState = this.multiplayerService.toPublicLobbyState(menuLobby);
+    this.server.to(normalizedJoinCode).emit('session:returnedToMenu', publicState);
+    this.broadcastLobby(normalizedJoinCode);
   }
 
   private clearRoundTimer(joinCode: string) {
@@ -86,6 +224,173 @@ export class MultiplayerGateway {
     if (timerHandle) {
       clearTimeout(timerHandle);
       this.roundTimers.delete(normalizedJoinCode);
+    }
+  }
+
+  private clearLobbyRoundState(joinCode: string) {
+    const normalizedJoinCode = this.normalizeJoinCode(joinCode);
+    this.lobbyRoundRevealContexts.delete(normalizedJoinCode);
+    this.autoAdvanceInFlight.delete(normalizedJoinCode);
+  }
+
+  private toSocketErrorMessage(error: unknown) {
+    if (error instanceof HttpException) {
+      const response = error.getResponse() as any;
+      if (typeof response === 'string' && response.trim()) {
+        return response.trim();
+      }
+      if (typeof response?.message === 'string' && response.message.trim()) {
+        return response.message.trim();
+      }
+      if (Array.isArray(response?.message) && typeof response.message[0] === 'string') {
+        return response.message[0];
+      }
+      return `Request failed (${error.getStatus()})`;
+    }
+
+    if (error instanceof Error) {
+      return error.message || 'Request failed';
+    }
+
+    return 'Request failed';
+  }
+
+  private emitRoundReveal(joinCode: string, context: RoundRevealContext) {
+    const normalizedJoinCode = this.normalizeJoinCode(joinCode);
+    const revealed = this.multiplayerService.reveal(normalizedJoinCode, context);
+    this.server.to(normalizedJoinCode).emit('round:reveal', {
+      correctAnswer: context.correctAnswer,
+      state: this.multiplayerService.toPublicLobbyState(revealed),
+    });
+    this.broadcastLobby(normalizedJoinCode);
+  }
+
+  private autoRevealRound(joinCode: string, trigger: 'allAnswered' | 'timeUp') {
+    const normalizedJoinCode = this.normalizeJoinCode(joinCode);
+    let lobby;
+    try {
+      lobby = this.multiplayerService.getLobby(normalizedJoinCode);
+    } catch {
+      return;
+    }
+
+    if (lobby.status !== 'question') {
+      return;
+    }
+
+    const roundRevealContext = this.lobbyRoundRevealContexts.get(normalizedJoinCode);
+    if (!roundRevealContext) {
+      return;
+    }
+
+    this.clearRoundTimer(normalizedJoinCode);
+    this.server.to(normalizedJoinCode).emit(
+      trigger === 'allAnswered' ? 'round:allAnswered' : 'round:timeUp',
+      {
+        joinCode: normalizedJoinCode,
+      },
+    );
+    this.emitRoundReveal(normalizedJoinCode, roundRevealContext);
+  }
+
+  private async startRoundFromSession(input: {
+    joinCode: string;
+    quizSessionId: string;
+    hostJwtSub: string;
+    timerMs?: number;
+  }) {
+    const normalizedJoinCode = this.normalizeJoinCode(input.joinCode);
+    const normalizedQuizSessionId = String(input.quizSessionId ?? '').trim();
+    if (!normalizedQuizSessionId) {
+      throw new BadRequestException('Missing quizSessionId');
+    }
+
+    this.lobbyQuizSessionIds.set(normalizedJoinCode, normalizedQuizSessionId);
+    this.clearRoundTimer(normalizedJoinCode);
+
+    const questionPayload = await this.quizService.nextQuestion(normalizedQuizSessionId);
+    if (questionPayload.done || !questionPayload.question) {
+      this.clearRoundTimer(normalizedJoinCode);
+      this.clearLobbyRoundState(normalizedJoinCode);
+      this.cleanupQuizSessionForLobby(normalizedJoinCode);
+      const ended = this.multiplayerService.endGame(normalizedJoinCode);
+      this.server
+        .to(normalizedJoinCode)
+        .emit('game:ended', this.multiplayerService.toPublicLobbyState(ended));
+      return { done: true } as const;
+    }
+
+    const question = questionPayload.question;
+    const timerMs = Math.max(1, Math.floor(input.timerMs ?? 30_000));
+    this.multiplayerService.startQuestion(normalizedJoinCode, question.correctSongId, timerMs);
+    this.lobbyRoundRevealContexts.set(normalizedJoinCode, {
+      correctAnswer: question.correctAnswer,
+      answerType: question.questionObject.answerType,
+      format: question.questionObject.format,
+      toleranceYears: question.questionObject.payload?.toleranceYears,
+      correctYear: question.questionObject.payload?.correctYear,
+    });
+
+    this.server.to(normalizedJoinCode).emit('round:question', {
+      ...questionPayload,
+      timerMs,
+    });
+    this.broadcastLobby(normalizedJoinCode);
+    this.startRoundTimer(normalizedJoinCode, timerMs);
+
+    try {
+      await this.spotifyService.startPlayback(
+        question.correctTrackUri,
+        undefined,
+        0,
+        input.hostJwtSub,
+      );
+    } catch (error) {
+      this.server.to(normalizedJoinCode).emit('round:playbackError', {
+        message: this.toPlaybackErrorMessage(error),
+      });
+    }
+
+    return questionPayload;
+  }
+
+  private async autoStartNextRound(joinCode: string) {
+    const normalizedJoinCode = this.normalizeJoinCode(joinCode);
+    if (this.autoAdvanceInFlight.has(normalizedJoinCode)) {
+      return;
+    }
+
+    const quizSessionId = this.lobbyQuizSessionIds.get(normalizedJoinCode);
+    if (!quizSessionId) {
+      return;
+    }
+
+    let lobby;
+    try {
+      lobby = this.multiplayerService.getLobby(normalizedJoinCode);
+    } catch {
+      return;
+    }
+
+    if (lobby.status !== 'reveal' || !this.multiplayerService.allPlayersReadyForNext(lobby)) {
+      return;
+    }
+
+    this.autoAdvanceInFlight.add(normalizedJoinCode);
+    try {
+      await this.startRoundFromSession({
+        joinCode: normalizedJoinCode,
+        quizSessionId,
+        hostJwtSub: lobby.hostJwtSub,
+        timerMs: lobby.roundTimerMs ?? 30_000,
+      });
+    } catch (error) {
+      this.server.to(normalizedJoinCode).emit('exception', {
+        message: this.toSocketErrorMessage(error),
+      });
+      this.broadcastLobby(normalizedJoinCode);
+    } finally {
+      this.autoAdvanceInFlight.delete(normalizedJoinCode);
     }
   }
 
@@ -107,10 +412,7 @@ export class MultiplayerGateway {
         return;
       }
 
-      this.server.to(normalizedJoinCode).emit('round:timeUp', {
-        joinCode: normalizedJoinCode,
-      });
-      this.broadcastLobby(normalizedJoinCode);
+      this.autoRevealRound(normalizedJoinCode, 'timeUp');
     }, Math.max(1, Math.floor(timerMs)));
 
     this.roundTimers.set(normalizedJoinCode, timerHandle);
@@ -170,15 +472,29 @@ export class MultiplayerGateway {
     @ConnectedSocket() client: Socket,
     @MessageBody() body: PlayerJoinBody,
   ) {
-    const lobby = this.multiplayerService.addPlayer(
-      body.joinCode,
-      client.id,
-      body.name,
-      body.avatarDataUrl,
-    );
-    client.join(lobby.joinCode);
-    this.broadcastLobby(lobby.joinCode);
-    return this.multiplayerService.toPublicLobbyState(lobby);
+    const normalizedPlayerSessionId = String(body.playerSessionId ?? '').trim();
+    const joined = normalizedPlayerSessionId
+      ? this.multiplayerService.reconnectPlayer(
+          body.joinCode,
+          client.id,
+          normalizedPlayerSessionId,
+        )
+      : this.multiplayerService.addPlayer(
+          body.joinCode,
+          client.id,
+          body.name,
+          body.avatarDataUrl,
+        );
+
+    this.cancelDisconnectedPlayerCleanup(joined.lobby.joinCode, joined.playerSessionId);
+
+    client.join(joined.lobby.joinCode);
+    client.emit('player:session', {
+      joinCode: this.normalizeJoinCode(joined.lobby.joinCode),
+      playerSessionId: joined.playerSessionId,
+    });
+    this.broadcastLobby(joined.lobby.joinCode);
+    return this.multiplayerService.toPublicLobbyState(joined.lobby);
   }
 
   @SubscribeMessage('host:startRound')
@@ -187,7 +503,8 @@ export class MultiplayerGateway {
     @MessageBody() body: HostStartRoundBody,
   ) {
     const hostJwt = this.assertHost(body.hostJwt);
-    const lobby = this.multiplayerService.getLobby(body.joinCode);
+    const normalizedJoinCode = this.normalizeJoinCode(body.joinCode);
+    const lobby = this.multiplayerService.getLobby(normalizedJoinCode);
     if (lobby.hostSocketId !== client.id || lobby.hostJwtSub !== hostJwt.sub) {
       throw new Error('Host not authorized for this lobby');
     }
@@ -199,38 +516,12 @@ export class MultiplayerGateway {
       throw new BadRequestException('Waiting for players to continue');
     }
 
-    this.clearRoundTimer(body.joinCode);
-
-    const questionPayload = await this.quizService.nextQuestion(body.quizSessionId);
-    if (questionPayload.done || !questionPayload.question) {
-      const ended = this.multiplayerService.endGame(body.joinCode);
-      this.server
-        .to(this.normalizeJoinCode(body.joinCode))
-        .emit('game:ended', this.multiplayerService.toPublicLobbyState(ended));
-      return { done: true };
-    }
-
-    const question = questionPayload.question;
-    const timerMs = Math.max(1, Math.floor(body.timerMs ?? 30_000));
-
-    this.multiplayerService.startQuestion(body.joinCode, question.correctSongId, timerMs);
-
-    this.server.to(this.normalizeJoinCode(body.joinCode)).emit('round:question', {
-      ...questionPayload,
-      timerMs,
+    return this.startRoundFromSession({
+      joinCode: normalizedJoinCode,
+      quizSessionId: body.quizSessionId,
+      hostJwtSub: hostJwt.sub,
+      timerMs: body.timerMs,
     });
-    this.broadcastLobby(body.joinCode);
-    this.startRoundTimer(body.joinCode, timerMs);
-
-    try {
-      await this.spotifyService.startPlayback(question.correctTrackUri);
-    } catch (error) {
-      this.server.to(this.normalizeJoinCode(body.joinCode)).emit('round:playbackError', {
-        message: this.toPlaybackErrorMessage(error),
-      });
-    }
-
-    return questionPayload;
   }
 
   @SubscribeMessage('player:answer')
@@ -250,15 +541,13 @@ export class MultiplayerGateway {
       lobby.players.size > 0 &&
       Array.from(lobby.players.values()).every((player) => player.latestAnswer);
     if (allAnswered) {
-      this.server.to(this.normalizeJoinCode(body.joinCode)).emit('round:allAnswered', {
-        joinCode: this.normalizeJoinCode(body.joinCode),
-      });
+      this.autoRevealRound(body.joinCode, 'allAnswered');
     }
     return { ok: true };
   }
 
   @SubscribeMessage('player:continue')
-  playerContinue(
+  async playerContinue(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: PlayerContinueBody,
   ) {
@@ -274,6 +563,7 @@ export class MultiplayerGateway {
         readyPlayers,
         totalPlayers,
       });
+      await this.autoStartNextRound(body.joinCode);
     }
 
     return {
@@ -281,6 +571,22 @@ export class MultiplayerGateway {
       readyPlayers,
       totalPlayers,
     };
+  }
+
+  @SubscribeMessage('player:leave')
+  playerLeave(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: PlayerLeaveBody,
+  ) {
+    const removed = this.multiplayerService.removePlayer(
+      body.joinCode,
+      client.id,
+      body.playerSessionId,
+    );
+    this.cancelDisconnectedPlayerCleanup(removed.lobby.joinCode, removed.playerSessionId);
+    this.broadcastLobby(removed.lobby.joinCode);
+    this.abortSessionIfNoPlayers(removed.lobby.joinCode);
+    return { ok: true };
   }
 
   @SubscribeMessage('host:reveal')
@@ -295,13 +601,9 @@ export class MultiplayerGateway {
     }
 
     this.clearRoundTimer(body.joinCode);
-
-    const revealed = this.multiplayerService.reveal(body.joinCode, body.correctAnswer);
-    this.server.to(this.normalizeJoinCode(body.joinCode)).emit('round:reveal', {
+    this.emitRoundReveal(body.joinCode, {
       correctAnswer: body.correctAnswer,
-      state: this.multiplayerService.toPublicLobbyState(revealed),
     });
-    this.broadcastLobby(body.joinCode);
     return { ok: true };
   }
 
@@ -335,6 +637,8 @@ export class MultiplayerGateway {
       throw new Error('Host not authorized for this lobby');
     }
     this.clearRoundTimer(body.joinCode);
+    this.clearLobbyRoundState(body.joinCode);
+    this.cleanupQuizSessionForLobby(body.joinCode);
     const endedLobby = this.multiplayerService.endGame(body.joinCode);
     this.server
       .to(this.normalizeJoinCode(body.joinCode))
@@ -353,6 +657,8 @@ export class MultiplayerGateway {
       throw new Error('Host not authorized for this lobby');
     }
     this.clearRoundTimer(body.joinCode);
+    this.clearLobbyRoundState(body.joinCode);
+    this.cleanupQuizSessionForLobby(body.joinCode);
     const resetLobby = this.multiplayerService.resetGame(body.joinCode);
     const publicState = this.multiplayerService.toPublicLobbyState(resetLobby);
     this.server.to(this.normalizeJoinCode(body.joinCode)).emit('game:restarted', publicState);
@@ -371,6 +677,8 @@ export class MultiplayerGateway {
       throw new Error('Host not authorized for this lobby');
     }
     this.clearRoundTimer(body.joinCode);
+    this.clearLobbyRoundState(body.joinCode);
+    this.cleanupQuizSessionForLobby(body.joinCode);
     const menuLobby = this.multiplayerService.clearToMenu(body.joinCode);
     const publicState = this.multiplayerService.toPublicLobbyState(menuLobby);
     this.server

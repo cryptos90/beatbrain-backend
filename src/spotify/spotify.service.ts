@@ -14,6 +14,18 @@ export type SpotifyPlaylistSummary = {
   id: string;
   name: string;
   images: { url: string }[];
+  owner?: {
+    id?: string;
+  };
+  tracks?: {
+    total?: number;
+  };
+};
+
+type SpotifyCurrentUserPlaylistsPage = {
+  items?: SpotifyPlaylistSummary[];
+  next?: string | null;
+  total?: number;
 };
 
 export type SpotifyPlaylistTrackEntity = {
@@ -116,6 +128,13 @@ export type SpotifyPlaybackDevice = {
   type: string;
 };
 
+export type SpotifyPlayerDeviceSummary = {
+  id: string;
+  name: string;
+  type: string;
+  is_active: boolean;
+};
+
 type CachedPlaylistTracks = {
   tracks: SpotifyPlaylistTrackEntity[];
   expiresAt: number;
@@ -132,7 +151,7 @@ type CachedResolvedPlaylist = {
 
 const PLAYLIST_TRACKS_CACHE_TTL_MS = 60_000;
 const RESOLVE_PLAYLIST_CACHE_TTL_MS = 30_000;
-const PLAYBACK_DEVICE_CACHE_TTL_MS = 5 * 60_000;
+const LAST_KNOWN_PLAYBACK_DEVICE_TTL_MS = 30 * 60_000;
 
 type SpotifyRequestContext = {
   playlistId?: string;
@@ -159,7 +178,10 @@ export class SpotifyService {
   private readonly playlistTracksCache = new Map<string, CachedPlaylistTracks>();
   private readonly resolvePlaylistCache = new Map<string, CachedResolvedPlaylist>();
   private readonly lastSeedOffsetByPlaylist = new Map<string, number>();
-  private playbackDeviceCache: { id: string; expiresAt: number } | null = null;
+  private readonly playbackDeviceByHost = new Map<
+    string,
+    { id: string; expiresAt: number }
+  >();
   private readonly playlistTracksInFlight = new Map<
     string,
     Promise<SpotifyPlaylistTrackEntity[]>
@@ -597,6 +619,73 @@ export class SpotifyService {
     return results;
   }
 
+  async getCurrentUserPlaylistsMeta(
+    expectedOwnerUserId?: string,
+  ): Promise<SpotifyPlaylistMeta[]> {
+    const minimumTrackCount = 50;
+    const playlists: SpotifyPlaylistMeta[] = [];
+    const seenPlaylistIds = new Set<string>();
+    const normalizedExpectedOwnerId = String(expectedOwnerUserId ?? '')
+      .trim()
+      .toLowerCase();
+    const tokenUserId = await this.tryResolveSpotifyTokenUserId();
+    const ownerUserId =
+      normalizedExpectedOwnerId || String(tokenUserId ?? '').trim().toLowerCase();
+    if (!ownerUserId) {
+      this.logger.warn(
+        '[choose] could not resolve current spotify user id, returning no playable playlists',
+      );
+      return playlists;
+    }
+
+    let nextPath: string | null =
+      '/me/playlists?limit=50&fields=items(id,name,images(url),owner(id),tracks(total)),next,total';
+
+    while (nextPath) {
+      const page = await this.spotifyApiFetch<SpotifyCurrentUserPlaylistsPage>(
+        nextPath,
+      );
+
+      const items = Array.isArray(page?.items) ? page.items : [];
+      for (const item of items) {
+        const id = String(item?.id ?? '').trim();
+        const ownerId = String(item?.owner?.id ?? '')
+          .trim()
+          .toLowerCase();
+        if (!ownerId || ownerId !== ownerUserId) {
+          continue;
+        }
+        if (!id || seenPlaylistIds.has(id)) {
+          continue;
+        }
+
+        let trackTotal = Number(item?.tracks?.total ?? NaN);
+        if (!Number.isFinite(trackTotal)) {
+          try {
+            trackTotal = await this.getPlaylistTrackTotal(id);
+          } catch {
+            continue;
+          }
+        }
+        if (trackTotal < minimumTrackCount) {
+          continue;
+        }
+
+        seenPlaylistIds.add(id);
+        playlists.push({
+          id,
+          name: String(item?.name ?? '').trim(),
+          coverUrl: String(item?.images?.[0]?.url ?? '').trim(),
+        });
+      }
+
+      const rawNextPath = String(page?.next ?? '').trim();
+      nextPath = rawNextPath || null;
+    }
+
+    return playlists;
+  }
+
   async getPlaylist(playlistId: string) {
     const playlist = await this.getPlaylistMeta(playlistId);
     return {
@@ -960,352 +1049,373 @@ export class SpotifyService {
     };
   }
 
-  async getDevices() {
-    const payload = await this.spotifyApiFetch<SpotifyDevicesResponse>('/me/player/devices');
-    return (payload.devices ?? []).map((device) => ({
-      id: String(device.id ?? ''),
-      is_active: Boolean(device.is_active),
-      is_restricted: Boolean(device.is_restricted),
-      name: String(device.name ?? ''),
-      type: String(device.type ?? ''),
-    }));
+  private normalizeHostUserId(hostUserId?: string) {
+    return String(hostUserId ?? '').trim();
   }
 
-  private getCachedPlaybackDeviceId() {
-    if (!this.playbackDeviceCache) {
+  private getCachedPlaybackDeviceId(hostUserId?: string) {
+    const hostKey = this.normalizeHostUserId(hostUserId);
+    if (!hostKey) {
       return null;
     }
 
-    if (Date.now() >= this.playbackDeviceCache.expiresAt) {
-      this.playbackDeviceCache = null;
+    const cached = this.playbackDeviceByHost.get(hostKey);
+    if (!cached) {
       return null;
     }
 
-    const normalizedId = String(this.playbackDeviceCache.id ?? '').trim();
+    if (Date.now() >= cached.expiresAt) {
+      this.playbackDeviceByHost.delete(hostKey);
+      return null;
+    }
+
+    const normalizedId = String(cached.id ?? '').trim();
     if (!normalizedId) {
-      this.playbackDeviceCache = null;
+      this.playbackDeviceByHost.delete(hostKey);
       return null;
     }
 
     return normalizedId;
   }
 
-  private setCachedPlaybackDeviceId(deviceId: string) {
-    const normalizedId = String(deviceId ?? '').trim();
-    if (!normalizedId) {
+  private setCachedPlaybackDeviceId(hostUserId: string | undefined, deviceId: string) {
+    const hostKey = this.normalizeHostUserId(hostUserId);
+    const normalizedDeviceId = String(deviceId ?? '').trim();
+    if (!hostKey || !normalizedDeviceId) {
       return;
     }
 
-    this.playbackDeviceCache = {
-      id: normalizedId,
-      expiresAt: Date.now() + PLAYBACK_DEVICE_CACHE_TTL_MS,
-    };
+    this.playbackDeviceByHost.set(hostKey, {
+      id: normalizedDeviceId,
+      expiresAt: Date.now() + LAST_KNOWN_PLAYBACK_DEVICE_TTL_MS,
+    });
   }
 
-  private clearCachedPlaybackDeviceId() {
-    this.playbackDeviceCache = null;
-  }
-
-  private normalizePlaybackDeviceResolutionError(error: unknown) {
-    if (error instanceof HttpException && error.getStatus() === 401) {
-      throw new UnauthorizedException('Spotify authorization failed. Please login again.');
+  private clearCachedPlaybackDeviceId(
+    hostUserId: string | undefined,
+    deviceIdToMatch?: string,
+  ) {
+    const hostKey = this.normalizeHostUserId(hostUserId);
+    if (!hostKey) {
+      return;
     }
-    if (error instanceof HttpException && error.getStatus() === 403) {
-      throw new HttpException(
-        {
-          statusCode: 403,
-          message: 'Playback requires Spotify Premium / missing scope.',
-        },
-        403,
-      );
+
+    const cached = this.playbackDeviceByHost.get(hostKey);
+    if (!cached) {
+      return;
+    }
+
+    const maybeMatch = String(deviceIdToMatch ?? '').trim();
+    if (!maybeMatch || cached.id === maybeMatch) {
+      this.playbackDeviceByHost.delete(hostKey);
+    }
+  }
+
+  private async parseSpotifyResponsePayload<T = Record<string, any>>(response: Response) {
+    const text = await response.text().catch(() => '');
+    if (!text) {
+      return undefined as T | undefined;
+    }
+
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return undefined as T | undefined;
+    }
+  }
+
+  private throwPlaybackError(params: {
+    statusCode: number;
+    code: string;
+    message: string;
+    retryAfterSeconds?: number;
+  }): never {
+    throw new HttpException(
+      {
+        statusCode: params.statusCode,
+        code: params.code,
+        message: params.message,
+        ...(typeof params.retryAfterSeconds === 'number' &&
+        Number.isFinite(params.retryAfterSeconds)
+          ? { retryAfterSeconds: params.retryAfterSeconds }
+          : {}),
+      },
+      params.statusCode,
+    );
+  }
+
+  private handlePlaybackRequestException(error: unknown): never {
+    if (error instanceof UnauthorizedException) {
+      this.throwPlaybackError({
+        statusCode: 401,
+        code: 'UNAUTHORIZED',
+        message: 'Spotify authorization failed. Please login again.',
+      });
     }
     throw error;
   }
 
-  private async resolvePlaybackDeviceId(forceRefresh = false) {
-    if (!forceRefresh) {
-      const cached = this.getCachedPlaybackDeviceId();
-      if (cached) {
-        return cached;
-      }
-    }
+  private async sendPlaybackStartRequest(params: {
+    trackUri: string;
+    deviceId?: string;
+    positionMs?: number;
+  }) {
+    const normalizedDeviceId = String(params.deviceId ?? '').trim();
+    const normalizedTrackUri = String(params.trackUri ?? '').trim();
+    const rawPositionMs = Number(params.positionMs ?? 0);
+    const includePositionMs = Number.isFinite(rawPositionMs) && rawPositionMs >= 0;
+    const positionMs = includePositionMs ? Math.floor(rawPositionMs) : 0;
+    const query = normalizedDeviceId
+      ? `?device_id=${encodeURIComponent(normalizedDeviceId)}`
+      : '';
 
-    const devices = await this.getDevices();
-    const preferred =
-      devices.find((device) => device.is_active) ??
-      devices.find((device) => !device.is_restricted);
-    const nextDeviceId = String(preferred?.id ?? '').trim();
-
-    if (nextDeviceId) {
-      this.setCachedPlaybackDeviceId(nextDeviceId);
-      return nextDeviceId;
-    }
-
-    this.clearCachedPlaybackDeviceId();
-    return '';
-  }
-
-  private async sendPlaybackStartRequest(trackUri: string, deviceId: string) {
-    const query = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : '';
-    const path = `/me/player/play${query}`;
-
-    const { response } = await this.spotifyApiRequest(path, {
+    const { response } = await this.spotifyApiRequest(`/me/player/play${query}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        uris: [trackUri],
-        position_ms: 0,
+        uris: [normalizedTrackUri],
+        ...(includePositionMs ? { position_ms: positionMs } : {}),
       }),
     });
 
     return response;
   }
 
-  private async sendPlaybackPauseRequest(deviceId: string) {
-    const query = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : '';
-    const path = `/me/player/pause${query}`;
-
-    const { response } = await this.spotifyApiRequest(path, {
+  private async sendPlaybackPauseRequest(deviceId?: string) {
+    const normalizedDeviceId = String(deviceId ?? '').trim();
+    const query = normalizedDeviceId
+      ? `?device_id=${encodeURIComponent(normalizedDeviceId)}`
+      : '';
+    const { response } = await this.spotifyApiRequest(`/me/player/pause${query}`, {
       method: 'PUT',
     });
-
     return response;
   }
 
-  async pausePlayback(deviceId?: string) {
-    const explicitDeviceId = String(deviceId ?? '').trim();
-    let resolvedDeviceId = explicitDeviceId;
-    if (explicitDeviceId) {
-      this.setCachedPlaybackDeviceId(explicitDeviceId);
+  private resolvePlaybackDeviceId(inputDeviceId?: string, hostUserId?: string) {
+    const explicit = String(inputDeviceId ?? '').trim();
+    if (explicit) {
+      return explicit;
     }
-
-    if (!resolvedDeviceId) {
-      try {
-        resolvedDeviceId = await this.resolvePlaybackDeviceId(false);
-      } catch (error) {
-        this.normalizePlaybackDeviceResolutionError(error);
-      }
-    }
-
-    try {
-      let response = await this.sendPlaybackPauseRequest(resolvedDeviceId);
-
-      if (response.status === 404 && !explicitDeviceId) {
-        this.clearCachedPlaybackDeviceId();
-        try {
-          const refreshedDeviceId = await this.resolvePlaybackDeviceId(true);
-          if (refreshedDeviceId) {
-            resolvedDeviceId = refreshedDeviceId;
-            response = await this.sendPlaybackPauseRequest(resolvedDeviceId);
-          }
-        } catch (error) {
-          this.normalizePlaybackDeviceResolutionError(error);
-        }
-      }
-
-      if (response.status === 404) {
-        return {
-          ok: true,
-          paused: false,
-          deviceId: resolvedDeviceId || null,
-        };
-      }
-
-      if (response.status === 403) {
-        throw new HttpException(
-          {
-            statusCode: 403,
-            message: 'Playback requires Spotify Premium / missing scope.',
-          },
-          403,
-        );
-      }
-
-      if (response.status === 401) {
-        throw new UnauthorizedException('Spotify authorization failed. Please login again.');
-      }
-
-      if (response.status === 429) {
-        const retryAfterSeconds = this.parseRetryAfterSeconds(response);
-        throw new HttpException(
-          {
-            statusCode: 429,
-            message: 'Spotify API rate limit reached',
-            retryAfterSeconds,
-          },
-          429,
-        );
-      }
-
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as Record<string, any>;
-        throw new HttpException(
-          {
-            statusCode: response.status,
-            message:
-              payload?.error?.message ??
-              payload?.message ??
-              `Spotify playback pause request failed (${response.status})`,
-          },
-          response.status,
-        );
-      }
-
-      if (resolvedDeviceId) {
-        this.setCachedPlaybackDeviceId(resolvedDeviceId);
-      }
-
-      return {
-        ok: true,
-        paused: true,
-        deviceId: resolvedDeviceId || null,
-      };
-    } catch (error) {
-      if (error instanceof HttpException) {
-        if (error.getStatus() === 403) {
-          throw new HttpException(
-            {
-              statusCode: 403,
-              message: 'Playback requires Spotify Premium / missing scope.',
-            },
-            403,
-          );
-        }
-      }
-      if (error instanceof UnauthorizedException) {
-        throw new UnauthorizedException('Spotify authorization failed. Please login again.');
-      }
-      throw error;
-    }
+    return this.getCachedPlaybackDeviceId(hostUserId) ?? '';
   }
 
-  async startPlayback(trackUri: string, deviceId?: string) {
-    const normalizedTrackUri = String(trackUri ?? '').trim();
+  async getPlayerDevices(): Promise<SpotifyPlayerDeviceSummary[]> {
+    let response: Response;
+    try {
+      ({ response } = await this.spotifyApiRequest('/me/player/devices', {
+        method: 'GET',
+      }));
+    } catch (error) {
+      this.handlePlaybackRequestException(error);
+    }
+
+    if (response.status === 403) {
+      this.throwPlaybackError({
+        statusCode: 403,
+        code: 'FORBIDDEN_OR_SCOPE',
+        message: 'Playback requires Spotify Premium / missing scope.',
+      });
+    }
+
+    if (response.status === 429) {
+      this.throwPlaybackError({
+        statusCode: 429,
+        code: 'RATE_LIMIT',
+        message: 'Spotify API rate limit reached',
+        retryAfterSeconds: this.parseRetryAfterSeconds(response),
+      });
+    }
+
+    if (!response.ok) {
+      const payload = await this.parseSpotifyResponsePayload<Record<string, any>>(response);
+      this.throwPlaybackError({
+        statusCode: response.status,
+        code: 'SPOTIFY_DEVICES_FAILED',
+        message: this.extractSpotifyErrorMessage(
+          payload,
+          response.status,
+          response.statusText,
+        ),
+      });
+    }
+
+    const payload = await this.parseSpotifyResponsePayload<SpotifyDevicesResponse>(response);
+    const devices = Array.isArray(payload?.devices) ? payload.devices : [];
+    return devices
+      .map((device) => ({
+        id: String(device?.id ?? '').trim(),
+        name: String(device?.name ?? '').trim(),
+        type: String(device?.type ?? '').trim(),
+        is_active: Boolean(device?.is_active),
+      }))
+      .filter((device) => Boolean(device.id));
+  }
+
+  async getDevices() {
+    return this.getPlayerDevices();
+  }
+
+  async playTrack(input: {
+    trackUri: string;
+    deviceId?: string;
+    positionMs?: number;
+    hostUserId?: string;
+  }) {
+    const normalizedTrackUri = String(input.trackUri ?? '').trim();
     if (!normalizedTrackUri) {
       throw new BadRequestException('Missing track URI');
     }
 
-    const explicitDeviceId = String(deviceId ?? '').trim();
-    let resolvedDeviceId = explicitDeviceId;
-    if (explicitDeviceId) {
-      this.setCachedPlaybackDeviceId(explicitDeviceId);
-    }
+    const normalizedHostUserId = this.normalizeHostUserId(input.hostUserId);
+    const resolvedDeviceId = this.resolvePlaybackDeviceId(
+      input.deviceId,
+      normalizedHostUserId,
+    );
 
-    if (!resolvedDeviceId) {
-      try {
-        resolvedDeviceId = await this.resolvePlaybackDeviceId(false);
-      } catch (error) {
-        this.normalizePlaybackDeviceResolutionError(error);
-      }
-    }
-
+    let response: Response;
     try {
-      let response = await this.sendPlaybackStartRequest(
-        normalizedTrackUri,
-        resolvedDeviceId,
+      response = await this.sendPlaybackStartRequest({
+        trackUri: normalizedTrackUri,
+        deviceId: resolvedDeviceId,
+        positionMs: input.positionMs,
+      });
+    } catch (error) {
+      this.handlePlaybackRequestException(error);
+    }
+
+    if (response.status === 429) {
+      this.throwPlaybackError({
+        statusCode: 429,
+        code: 'RATE_LIMIT',
+        message: 'Spotify API rate limit reached',
+        retryAfterSeconds: this.parseRetryAfterSeconds(response),
+      });
+    }
+
+    if (response.status === 403) {
+      this.throwPlaybackError({
+        statusCode: 403,
+        code: 'FORBIDDEN_OR_SCOPE',
+        message: 'Playback requires Spotify Premium / missing scope.',
+      });
+    }
+
+    if (!response.ok) {
+      const payload = await this.parseSpotifyResponsePayload<Record<string, any>>(response);
+      const spotifyMessage = this.extractSpotifyErrorMessage(
+        payload,
+        response.status,
+        response.statusText,
       );
+      const isNoActiveDevice =
+        response.status === 404 || spotifyMessage.toLowerCase().includes('no active device');
 
-      if (response.status === 404 && !explicitDeviceId) {
-        this.clearCachedPlaybackDeviceId();
-        try {
-          const refreshedDeviceId = await this.resolvePlaybackDeviceId(true);
-          if (refreshedDeviceId) {
-            resolvedDeviceId = refreshedDeviceId;
-            response = await this.sendPlaybackStartRequest(
-              normalizedTrackUri,
-              resolvedDeviceId,
-            );
-          }
-        } catch (error) {
-          this.normalizePlaybackDeviceResolutionError(error);
-        }
+      if (isNoActiveDevice) {
+        this.clearCachedPlaybackDeviceId(normalizedHostUserId, resolvedDeviceId);
+        this.throwPlaybackError({
+          statusCode: 404,
+          code: 'NO_ACTIVE_DEVICE',
+          message:
+            spotifyMessage ||
+            'No active Spotify device. Open Spotify and start playing something once.',
+        });
       }
 
-      if (response.status === 404) {
-        throw new HttpException(
-          {
-            statusCode: 404,
-            message: 'No active Spotify device. Open Spotify and start playing something once.',
-          },
-          404,
-        );
-      }
+      this.throwPlaybackError({
+        statusCode: response.status,
+        code: 'SPOTIFY_PLAY_FAILED',
+        message: spotifyMessage,
+      });
+    }
 
-      if (response.status === 403) {
-        throw new HttpException(
-          {
-            statusCode: 403,
-            message: 'Playback requires Spotify Premium / missing scope.',
-          },
-          403,
-        );
-      }
+    if (resolvedDeviceId) {
+      this.setCachedPlaybackDeviceId(normalizedHostUserId, resolvedDeviceId);
+    }
 
-      if (response.status === 401) {
-        throw new UnauthorizedException('Spotify authorization failed. Please login again.');
-      }
+    return {
+      ok: true,
+      deviceId: resolvedDeviceId || null,
+    };
+  }
 
-      if (response.status === 429) {
-        const retryAfterSeconds = this.parseRetryAfterSeconds(response);
-        throw new HttpException(
-          {
-            statusCode: 429,
-            message: 'Spotify API rate limit reached',
-            retryAfterSeconds,
-          },
-          429,
-        );
-      }
+  async startPlayback(
+    trackUri: string,
+    deviceId?: string,
+    positionMs?: number,
+    hostUserId?: string,
+  ) {
+    return this.playTrack({
+      trackUri,
+      deviceId,
+      positionMs,
+      hostUserId,
+    });
+  }
 
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as Record<string, any>;
-        throw new HttpException(
-          {
-            statusCode: response.status,
-            message:
-              payload?.error?.message ??
-              payload?.message ??
-              `Spotify playback request failed (${response.status})`,
-          },
-          response.status,
-        );
-      }
+  async pausePlayback(deviceId?: string, hostUserId?: string) {
+    const normalizedHostUserId = this.normalizeHostUserId(hostUserId);
+    const resolvedDeviceId = this.resolvePlaybackDeviceId(
+      deviceId,
+      normalizedHostUserId,
+    );
 
-      if (resolvedDeviceId) {
-        this.setCachedPlaybackDeviceId(resolvedDeviceId);
-      }
+    let response: Response;
+    try {
+      response = await this.sendPlaybackPauseRequest(resolvedDeviceId);
+    } catch (error) {
+      this.handlePlaybackRequestException(error);
+    }
 
+    if (response.status === 404) {
+      this.clearCachedPlaybackDeviceId(normalizedHostUserId, resolvedDeviceId);
       return {
         ok: true,
+        paused: false,
         deviceId: resolvedDeviceId || null,
       };
-    } catch (error) {
-      if (error instanceof HttpException) {
-        if (error.getStatus() === 404) {
-          throw new HttpException(
-            {
-              statusCode: 404,
-              message: 'No active Spotify device. Open Spotify and start playing something once.',
-            },
-            404,
-          );
-        }
-        if (error.getStatus() === 403) {
-          throw new HttpException(
-            {
-              statusCode: 403,
-              message: 'Playback requires Spotify Premium / missing scope.',
-            },
-            403,
-          );
-        }
-      }
-      if (error instanceof UnauthorizedException) {
-        throw new UnauthorizedException('Spotify authorization failed. Please login again.');
-      }
-      throw error;
     }
+
+    if (response.status === 429) {
+      this.throwPlaybackError({
+        statusCode: 429,
+        code: 'RATE_LIMIT',
+        message: 'Spotify API rate limit reached',
+        retryAfterSeconds: this.parseRetryAfterSeconds(response),
+      });
+    }
+
+    if (response.status === 403) {
+      this.throwPlaybackError({
+        statusCode: 403,
+        code: 'FORBIDDEN_OR_SCOPE',
+        message: 'Playback requires Spotify Premium / missing scope.',
+      });
+    }
+
+    if (!response.ok) {
+      const payload = await this.parseSpotifyResponsePayload<Record<string, any>>(response);
+      this.throwPlaybackError({
+        statusCode: response.status,
+        code: 'SPOTIFY_PAUSE_FAILED',
+        message: this.extractSpotifyErrorMessage(
+          payload,
+          response.status,
+          response.statusText,
+        ),
+      });
+    }
+
+    if (resolvedDeviceId) {
+      this.setCachedPlaybackDeviceId(normalizedHostUserId, resolvedDeviceId);
+    }
+
+    return {
+      ok: true,
+      paused: true,
+      deviceId: resolvedDeviceId || null,
+    };
   }
 }

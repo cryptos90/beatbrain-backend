@@ -8,6 +8,8 @@ type Player = {
   score: number;
   latestAnswer: string | null;
   readyForNext: boolean;
+  socketId: string | null;
+  disconnectedAt: number | null;
 };
 
 type Lobby = {
@@ -21,6 +23,14 @@ type Lobby = {
   roundTimerMs: number;
 };
 
+type RevealRoundInput = {
+  correctAnswer: string;
+  answerType?: string | null;
+  format?: string | null;
+  toleranceYears?: number | null;
+  correctYear?: number | null;
+};
+
 const MAX_PLAYERS = 10;
 const MAX_PLAYER_NAME_LENGTH = 20;
 const MAX_AVATAR_DATA_URL_LENGTH = 200_000;
@@ -28,6 +38,60 @@ const MAX_AVATAR_DATA_URL_LENGTH = 200_000;
 @Injectable()
 export class MultiplayerService {
   private readonly lobbies = new Map<string, Lobby>();
+
+  private isYearInputRound(input: RevealRoundInput) {
+    return input.format === 'year_input' || input.answerType === 'year-input';
+  }
+
+  private toYearValue(value: string | number | null | undefined) {
+    const normalized = String(value ?? '').trim();
+    if (!/^\d{1,4}$/.test(normalized)) {
+      return null;
+    }
+
+    const parsed = Number.parseInt(normalized, 10);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+
+    return parsed;
+  }
+
+  private resolveCorrectYear(input: RevealRoundInput) {
+    const fromPayload = Number(input.correctYear);
+    if (Number.isFinite(fromPayload)) {
+      return Math.floor(fromPayload);
+    }
+    return this.toYearValue(input.correctAnswer);
+  }
+
+  private normalizeToleranceYears(rawTolerance: number | null | undefined) {
+    const parsed = Number(rawTolerance ?? 0);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return 0;
+    }
+    return Math.floor(parsed);
+  }
+
+  private isCorrectAnswer(playerAnswer: string | null, input: RevealRoundInput) {
+    const normalizedAnswer = String(playerAnswer ?? '').trim();
+    if (!normalizedAnswer) {
+      return false;
+    }
+
+    if (this.isYearInputRound(input)) {
+      const guessYear = this.toYearValue(normalizedAnswer);
+      const correctYear = this.resolveCorrectYear(input);
+      if (guessYear === null || correctYear === null) {
+        return false;
+      }
+
+      const toleranceYears = this.normalizeToleranceYears(input.toleranceYears);
+      return Math.abs(guessYear - correctYear) <= toleranceYears;
+    }
+
+    return normalizedAnswer.toLowerCase() === input.correctAnswer.trim().toLowerCase();
+  }
 
   private resetLobbyForMenu(lobby: Lobby) {
     lobby.status = 'lobby';
@@ -59,6 +123,15 @@ export class MultiplayerService {
       }
     }
     return randomBytes(4).toString('hex').toUpperCase();
+  }
+
+  private findPlayerBySocketId(lobby: Lobby, playerSocketId: string) {
+    for (const player of lobby.players.values()) {
+      if (player.socketId === playerSocketId) {
+        return player;
+      }
+    }
+    return null;
   }
 
   createLobby(hostSocketId: string, hostJwtSub: string) {
@@ -96,10 +169,51 @@ export class MultiplayerService {
     return removedJoinCodes;
   }
 
-  removePlayer(playerSocketId: string) {
+  markPlayerDisconnected(playerSocketId: string) {
+    const disconnectedPlayers: { joinCode: string; playerSessionId: string }[] = [];
     for (const lobby of this.lobbies.values()) {
-      lobby.players.delete(playerSocketId);
+      const player = this.findPlayerBySocketId(lobby, playerSocketId);
+      if (!player) {
+        continue;
+      }
+      player.socketId = null;
+      player.disconnectedAt = Date.now();
+      disconnectedPlayers.push({ joinCode: lobby.joinCode, playerSessionId: player.id });
     }
+    return disconnectedPlayers;
+  }
+
+  removeDisconnectedPlayer(joinCode: string, playerSessionId: string) {
+    const lobby = this.getLobby(joinCode);
+    const normalizedPlayerSessionId = String(playerSessionId ?? '').trim();
+    const player = lobby.players.get(normalizedPlayerSessionId);
+    if (!player) {
+      return { removed: false, lobby, playerSessionId: normalizedPlayerSessionId };
+    }
+    if (player.socketId) {
+      return { removed: false, lobby, playerSessionId: normalizedPlayerSessionId };
+    }
+    lobby.players.delete(normalizedPlayerSessionId);
+    return { removed: true, lobby, playerSessionId: normalizedPlayerSessionId };
+  }
+
+  removePlayer(joinCode: string, playerSocketId: string, playerSessionId?: string | null) {
+    const lobby = this.getLobby(joinCode);
+    const normalizedPlayerSessionId = String(playerSessionId ?? '').trim();
+    let resolvedPlayer = normalizedPlayerSessionId
+      ? lobby.players.get(normalizedPlayerSessionId) ?? null
+      : null;
+
+    if (!resolvedPlayer) {
+      resolvedPlayer = this.findPlayerBySocketId(lobby, playerSocketId);
+    }
+
+    if (!resolvedPlayer) {
+      throw new NotFoundException('Player not in lobby');
+    }
+
+    lobby.players.delete(resolvedPlayer.id);
+    return { lobby, playerSessionId: resolvedPlayer.id };
   }
 
   addPlayer(
@@ -134,15 +248,36 @@ export class MultiplayerService {
       throw new BadRequestException('Avatar must be an image data URL');
     }
 
-    lobby.players.set(playerSocketId, {
-      id: randomUUID(),
+    const playerId = randomUUID();
+    lobby.players.set(playerId, {
+      id: playerId,
       name: normalizedName,
       avatarDataUrl: normalizedAvatar,
       score: 0,
       latestAnswer: null,
       readyForNext: false,
+      socketId: playerSocketId,
+      disconnectedAt: null,
     });
-    return lobby;
+    return { lobby, playerSessionId: playerId };
+  }
+
+  reconnectPlayer(joinCode: string, playerSocketId: string, playerSessionId: string) {
+    const lobby = this.getLobby(joinCode);
+    const normalizedPlayerSessionId = String(playerSessionId ?? '').trim();
+    if (!normalizedPlayerSessionId) {
+      throw new BadRequestException('Player session missing');
+    }
+
+    const player = lobby.players.get(normalizedPlayerSessionId);
+    if (!player) {
+      throw new NotFoundException('Player session not found');
+    }
+
+    player.socketId = playerSocketId;
+    player.disconnectedAt = null;
+
+    return { lobby, playerSessionId: normalizedPlayerSessionId };
   }
 
   startQuestion(joinCode: string, questionId: string, timerMs = 30_000) {
@@ -163,7 +298,7 @@ export class MultiplayerService {
     if (lobby.status !== 'question') {
       throw new BadRequestException('No active question');
     }
-    const player = lobby.players.get(playerSocketId);
+    const player = this.findPlayerBySocketId(lobby, playerSocketId);
     if (!player) {
       throw new NotFoundException('Player not in lobby');
     }
@@ -171,16 +306,15 @@ export class MultiplayerService {
     return lobby;
   }
 
-  reveal(joinCode: string, correctAnswer: string) {
+  reveal(joinCode: string, input: string | RevealRoundInput) {
+    const revealInput: RevealRoundInput =
+      typeof input === 'string' ? { correctAnswer: input } : input;
     const lobby = this.getLobby(joinCode);
     lobby.status = 'reveal';
     lobby.roundDeadline = null;
     for (const player of lobby.players.values()) {
       player.readyForNext = false;
-      if (
-        player.latestAnswer &&
-        player.latestAnswer.toLowerCase() === correctAnswer.toLowerCase()
-      ) {
+      if (this.isCorrectAnswer(player.latestAnswer, revealInput)) {
         player.score += 1;
       }
     }
@@ -222,7 +356,7 @@ export class MultiplayerService {
       throw new BadRequestException('Continue is only allowed during reveal');
     }
 
-    const player = lobby.players.get(playerSocketId);
+    const player = this.findPlayerBySocketId(lobby, playerSocketId);
     if (!player) {
       throw new NotFoundException('Player not in lobby');
     }

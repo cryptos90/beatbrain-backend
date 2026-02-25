@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Put } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service';
 import { SpotifyService } from './spotify.service';
 
-@Controller('spotify')
+@Controller(['spotify', 'api/spotify'])
 export class SpotifyController {
   constructor(
     private readonly authService: AuthService,
@@ -40,13 +40,42 @@ export class SpotifyController {
     return { tracks };
   }
 
+  @Put('player/play')
+  async playTrackMinimal(
+    @Headers('authorization') authorizationHeader: string | undefined,
+    @Body() body: { trackUri?: string; deviceId?: string; positionMs?: number },
+  ) {
+    const jwt = this.authService.verifyHostJwtOrThrow(authorizationHeader);
+    return this.spotifyService.playTrack({
+      trackUri: body.trackUri ?? '',
+      deviceId: body.deviceId,
+      positionMs: body.positionMs,
+      hostUserId: jwt.sub,
+    });
+  }
+
+  @Get('player/devices')
+  async getPlayerDevices(
+    @Headers('authorization') authorizationHeader: string | undefined,
+  ) {
+    this.authService.verifyHostJwtOrThrow(authorizationHeader);
+    return {
+      devices: await this.spotifyService.getPlayerDevices(),
+    };
+  }
+
   @Post('playback/play')
   async playTrack(
     @Headers('authorization') authorizationHeader: string | undefined,
-    @Body() body: { trackUri?: string; deviceId?: string },
+    @Body() body: { trackUri?: string; deviceId?: string; positionMs?: number },
   ) {
-    this.authService.verifyHostJwtOrThrow(authorizationHeader);
-    return this.spotifyService.startPlayback(body.trackUri ?? '', body.deviceId);
+    const jwt = this.authService.verifyHostJwtOrThrow(authorizationHeader);
+    return this.spotifyService.startPlayback(
+      body.trackUri ?? '',
+      body.deviceId,
+      body.positionMs,
+      jwt.sub,
+    );
   }
 
   @Post('playback/pause')
@@ -54,7 +83,7 @@ export class SpotifyController {
     @Headers('authorization') authorizationHeader: string | undefined,
     @Body() body: { deviceId?: string },
   ) {
-    this.authService.verifyHostJwtOrThrow(authorizationHeader);
-    return this.spotifyService.pausePlayback(body.deviceId);
+    const jwt = this.authService.verifyHostJwtOrThrow(authorizationHeader);
+    return this.spotifyService.pausePlayback(body.deviceId, jwt.sub);
   }
 }

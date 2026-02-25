@@ -14,6 +14,6 @@ export class ChooseController {
     @Headers('authorization') authorizationHeader: string | undefined,
   ) {
     const jwt = this.authService.verifyHostJwtOrThrow(authorizationHeader);
-    return this.chooseService.getCuratedPlaylists(jwt.sub);
+    return this.chooseService.getUserPlaylists(jwt.sub);
   }
 }
