@@ -518,3 +518,14 @@
   - `beatbrain-backend/start-backend.bat` now enforces `NODE_ENV=development` before `npm run start:dev` and logs the effective value.
   - Goal: consistent Nest dev startup logging across Windows machines even if global system/user env vars differ.
 
+# 33) Update 2026-02-28 (Reactive Host Mode Detection in App Entry)
+- Frontend host-mode detection in `App.tsx` is now reactive instead of one-shot:
+  - Tracks URL updates via `popstate`, `hashchange`, and patched `history.pushState`/`history.replaceState`.
+  - Re-evaluates host mode when URL changes after initial render.
+- Host mode detection sources:
+  - Path prefixes: `/host...` and `/--/host...`.
+  - Hash prefixes: `#/host...` and `#/--/host...`.
+  - Optional query override: `?app=host` (or `?mode=host`).
+- Goal:
+  - Prevent fallback to mobile UI when dev-server/runtime changes URL shape after app bootstrap.
+
