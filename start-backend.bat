@@ -20,8 +20,10 @@ REM --- optional port param, default 3000
 set "BPORT=%~1"
 if "%BPORT%"=="" set "BPORT=3000"
 set "PORT=%BPORT%"
+set "NODE_ENV=development"
 
 echo [INFO] Starting backend on PORT=%PORT%
+echo [INFO] NODE_ENV=%NODE_ENV%
 
 REM --- free backend port
 for /f %%a in ('powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue ^| Select-Object -ExpandProperty OwningProcess -Unique"') do (

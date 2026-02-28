@@ -510,3 +510,11 @@
 - Hinweis:
   - Ohne dauerhaftes Backend ist Singleplayer/Spotify-Flow nicht vollstaendig lauffaehig.
 
+# 32) Update 2026-02-28 (Host Web Route Robustness + Backend Dev Env Pin)
+- Host web route recognition hardened:
+  - Frontend App entry now detects host mode for both `/host...` and Expo-style `/--/host...` path prefixes.
+  - Host web controller route parsing/navigation now preserves whichever prefix is active (`/host` or `/--/host`) for parsing, canonicalization and auth redirect origin.
+- Backend startup script behavior:
+  - `beatbrain-backend/start-backend.bat` now enforces `NODE_ENV=development` before `npm run start:dev` and logs the effective value.
+  - Goal: consistent Nest dev startup logging across Windows machines even if global system/user env vars differ.
+
