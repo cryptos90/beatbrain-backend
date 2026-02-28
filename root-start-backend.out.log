@@ -1,0 +1,217 @@
+[INFO] Starting backend on PORT=3000
+
+> beatbrain-backend@0.0.1 start:dev
+> nest start --watch
+
+[2J[3J[H[[90m19:48:01[0m] Starting compilation in watch mode...
+
+[[90m19:48:04[0m] Found 0 errors. Watching for file changes.
+
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[AuthService] [39m[32mRestored host session from dev cache.[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigHostModule dependencies initialized[39m[38;5;3m +3ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAuthModule dependencies initialized[39m[38;5;3m +2ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMultiplayerModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mSpotifyModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mQuizModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:createLobby" message[39m[38;5;3m +16ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:join" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:startRound" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:answer" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:continue" message[39m[38;5;3m +1ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:reveal" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:next" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:end" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:restartQuiz" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:returnToMenu" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAppController {/}:[39m[38;5;3m +2ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/, GET} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/health, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mDevSpotifyController {/dev/spotify}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/ping, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/playlistTest, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/mePlaylists, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAuthController {/auth}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/start, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/callback, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/exchange, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/result, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/refresh, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/me, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mSpotifyController {/spotify}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/resolve, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/:id, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/:id/tracks, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playback/play, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mQuizController {/quiz}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions/:id/next, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions/:id, DELETE} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +2ms[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mBackend listening on port 3000[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mALLOW_PORT_FALLBACK: 0[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mCORS ENABLED ORIGINS: http://127.0.0.1:8081, http://localhost:8081, http://192.168.2.237:8081, http://localhost:19006, http://127.0.0.1:19006, http://localhost:19000, http://127.0.0.1:19000[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mSpotify redirect (mobile): beatbrain-login://callback[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mSpotify redirect (web): http://127.0.0.1:3000/auth/spotify/callback[39m
+[32m[Nest] 12280  - [39m20.02.2026, 19:48:05 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mHOST_WEB_ORIGIN: http://127.0.0.1:8081[39m
+[2J[3J[H[[90m20:25:28[0m] File change detected. Starting incremental compilation...
+
+[[90m20:25:28[0m] Found 0 errors. Watching for file changes.
+
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[AuthService] [39m[32mRestored host session from dev cache.[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigHostModule dependencies initialized[39m[38;5;3m +2ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAuthModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMultiplayerModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mSpotifyModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mQuizModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:createLobby" message[39m[38;5;3m +16ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:join" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:startRound" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:answer" message[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:continue" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:reveal" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:next" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:end" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:restartQuiz" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:returnToMenu" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAppController {/}:[39m[38;5;3m +2ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/, GET} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/health, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mDevSpotifyController {/dev/spotify}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/ping, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/playlistTest, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/mePlaylists, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAuthController {/auth}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/start, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/callback, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/exchange, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/result, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/refresh, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/me, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mSpotifyController {/spotify}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/resolve, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/:id, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/:id/tracks, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playback/play, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mQuizController {/quiz}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions/:id/next, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions/:id, DELETE} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +3ms[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mBackend listening on port 3000[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mALLOW_PORT_FALLBACK: 0[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mCORS ENABLED ORIGINS: http://127.0.0.1:8081, http://localhost:8081, http://192.168.2.237:8081, http://localhost:19006, http://127.0.0.1:19006, http://localhost:19000, http://127.0.0.1:19000[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mSpotify redirect (mobile): beatbrain-login://callback[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mSpotify redirect (web): http://127.0.0.1:3000/auth/spotify/callback[39m
+[32m[Nest] 21708  - [39m20.02.2026, 20:25:29 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mHOST_WEB_ORIGIN: http://127.0.0.1:8081[39m
+[2J[3J[H[[90m20:25:29[0m] File change detected. Starting incremental compilation...
+
+[[90m20:25:30[0m] Found 0 errors. Watching for file changes.
+
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[AuthService] [39m[32mRestored host session from dev cache.[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigHostModule dependencies initialized[39m[38;5;3m +2ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAuthModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMultiplayerModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mSpotifyModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mQuizModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:createLobby" message[39m[38;5;3m +15ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:join" message[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:startRound" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:answer" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:continue" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:reveal" message[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:next" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:end" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:restartQuiz" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:returnToMenu" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAppController {/}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/, GET} route[39m[38;5;3m +3ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/health, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mDevSpotifyController {/dev/spotify}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/ping, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/playlistTest, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/mePlaylists, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAuthController {/auth}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/start, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/callback, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/exchange, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/result, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/refresh, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/me, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mSpotifyController {/spotify}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/resolve, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/:id, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/:id/tracks, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playback/play, POST} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mQuizController {/quiz}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions/:id/next, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions/:id, DELETE} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +2ms[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mBackend listening on port 3000[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mALLOW_PORT_FALLBACK: 0[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mCORS ENABLED ORIGINS: http://127.0.0.1:8081, http://localhost:8081, http://192.168.2.237:8081, http://localhost:19006, http://127.0.0.1:19006, http://localhost:19000, http://127.0.0.1:19000[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mSpotify redirect (mobile): beatbrain-login://callback[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mSpotify redirect (web): http://127.0.0.1:3000/auth/spotify/callback[39m
+[32m[Nest] 21912  - [39m20.02.2026, 20:25:31 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mHOST_WEB_ORIGIN: http://127.0.0.1:8081[39m
+[2J[3J[H[[90m20:26:31[0m] File change detected. Starting incremental compilation...
+
+[[90m20:26:31[0m] Found 0 errors. Watching for file changes.
+
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[AuthService] [39m[32mRestored host session from dev cache.[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigHostModule dependencies initialized[39m[38;5;3m +2ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAuthModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMultiplayerModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mSpotifyModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mQuizModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:createLobby" message[39m[38;5;3m +17ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:join" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:startRound" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:answer" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "player:continue" message[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:reveal" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:next" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:end" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:restartQuiz" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[WebSocketsController] [39m[32mMultiplayerGateway subscribed to the "host:returnToMenu" message[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAppController {/}:[39m[38;5;3m +2ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/, GET} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/health, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mDevSpotifyController {/dev/spotify}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/ping, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/playlistTest, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/dev/spotify/mePlaylists, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAuthController {/auth}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/start, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/callback, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/spotify/exchange, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/result, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/refresh, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/me, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mSpotifyController {/spotify}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/resolve, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/:id, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playlists/:id/tracks, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/spotify/playback/play, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mQuizController {/quiz}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions/:id/next, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/quiz/sessions/:id, DELETE} route[39m[38;5;3m +3ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +2ms[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mBackend listening on port 3000[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mALLOW_PORT_FALLBACK: 0[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mCORS ENABLED ORIGINS: http://127.0.0.1:8081, http://localhost:8081, http://192.168.2.237:8081, http://localhost:19006, http://127.0.0.1:19006, http://localhost:19000, http://127.0.0.1:19000[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mSpotify redirect (mobile): beatbrain-login://callback[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mSpotify redirect (web): http://127.0.0.1:3000/auth/spotify/callback[39m
+[32m[Nest] 17556  - [39m20.02.2026, 20:26:32 [32m    LOG[39m [38;5;3m[Bootstrap] [39m[32mHOST_WEB_ORIGIN: http://127.0.0.1:8081[39m
