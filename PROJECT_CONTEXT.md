@@ -498,3 +498,15 @@
   - Player no longer sees question text or song info in multiplayer quiz view.
   - Answer buttons no longer change color during reveal on mobile.
   - Mobile screen is reduced to core interactions: choose answer, then press `Weiter`.
+
+# 31) Option (Standalone iPhone ohne lokalen Rechner)
+- Zielbild:
+  - BeatBrain soll auf iPhone dauerhaft nutzbar sein, ohne lokal laufenden Expo-Dev-Server oder lokalen PC-Backend-Prozess.
+- Notwendige Voraussetzungen:
+  - Backend dauerhaft online hosten (HTTPS, feste Domain).
+  - Frontend-ENV fuer Produktion auf gehostete API umstellen (`EXPO_PUBLIC_API_BASE_URL`).
+  - Spotify Redirect-URIs fuer Production korrekt im Spotify Dashboard hinterlegen (App-Scheme + Web-Callback-Domain).
+  - iOS App als echter Build verteilen (TestFlight/App Store), nicht Expo Dev-Server-abhaengig.
+- Hinweis:
+  - Ohne dauerhaftes Backend ist Singleplayer/Spotify-Flow nicht vollstaendig lauffaehig.
+

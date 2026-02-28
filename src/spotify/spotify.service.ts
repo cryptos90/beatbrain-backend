@@ -622,7 +622,6 @@ export class SpotifyService {
   async getCurrentUserPlaylistsMeta(
     expectedOwnerUserId?: string,
   ): Promise<SpotifyPlaylistMeta[]> {
-    const minimumTrackCount = 50;
     const playlists: SpotifyPlaylistMeta[] = [];
     const seenPlaylistIds = new Set<string>();
     const normalizedExpectedOwnerId = String(expectedOwnerUserId ?? '')
@@ -659,15 +658,22 @@ export class SpotifyService {
           continue;
         }
 
-        let trackTotal = Number(item?.tracks?.total ?? NaN);
-        if (!Number.isFinite(trackTotal)) {
+        const reportedTrackTotal = Number(item?.tracks?.total ?? NaN);
+        let hasPlayableTracks = Number.isFinite(reportedTrackTotal)
+          ? reportedTrackTotal > 0
+          : false;
+
+        // Spotify can report tracks.total=0 for some user playlists even though items exist.
+        // Fallback probe keeps choose-list usable for those playlists.
+        if (!hasPlayableTracks) {
           try {
-            trackTotal = await this.getPlaylistTrackTotal(id);
+            hasPlayableTracks = await this.playlistHasPlayableTracks(id);
           } catch {
-            continue;
+            hasPlayableTracks = false;
           }
         }
-        if (trackTotal < minimumTrackCount) {
+
+        if (!hasPlayableTracks) {
           continue;
         }
 
@@ -684,6 +690,30 @@ export class SpotifyService {
     }
 
     return playlists;
+  }
+
+  private async playlistHasPlayableTracks(playlistId: string) {
+    const query =
+      'limit=1&offset=0&market=from_token&fields=items(item(type,id,uri)),total,next';
+    const page = await this.fetchPlaylistItems<PlaylistTracksMinimalPage>(playlistId, query, {
+      playlistId,
+    });
+
+    const items = Array.isArray(page?.items) ? page.items : [];
+    for (const item of items) {
+      const track = this.resolvePlaylistTrackEntity(item);
+      if (!track) {
+        continue;
+      }
+
+      const id = String(track.id ?? '').trim();
+      const uri = String(track.uri ?? '').trim().toLowerCase();
+      if (id && uri && !uri.startsWith('spotify:local:')) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   async getPlaylist(playlistId: string) {
