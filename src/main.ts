@@ -5,6 +5,7 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { Logger } from '@nestjs/common';
 
 const MAX_PORT_ATTEMPTS = 3;
+const DEV_WEB_PORTS = new Set(['8081', '19006', '19000']);
 
 function isAddrInUseError(error: unknown): boolean {
   return (
@@ -13,6 +14,49 @@ function isAddrInUseError(error: unknown): boolean {
     'code' in error &&
     (error as any).code === 'EADDRINUSE'
   );
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+function isPrivateIpv4Host(host: string): boolean {
+  const parts = host.split('.').map((segment) => Number.parseInt(segment, 10));
+  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  if (parts[0] === 10) {
+    return true;
+  }
+
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) {
+    return true;
+  }
+
+  return parts[0] === 192 && parts[1] === 168;
+}
+
+function isAllowedDevOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    const host = parsed.hostname.toLowerCase();
+    const port =
+      parsed.port ||
+      (parsed.protocol === 'http:' ? '80' : parsed.protocol === 'https:' ? '443' : '');
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return false;
+    }
+
+    if (!DEV_WEB_PORTS.has(port)) {
+      return false;
+    }
+
+    return isLoopbackHost(host) || isPrivateIpv4Host(host);
+  } catch {
+    return false;
+  }
 }
 
 async function listenWithFallback(
@@ -62,23 +106,12 @@ async function bootstrap() {
   const devOrigins = [
     'http://localhost:8081',
     'http://127.0.0.1:8081',
-    'http://192.168.2.237:8081',
     'http://localhost:19006',
     'http://127.0.0.1:19006',
     'http://localhost:19000',
     'http://127.0.0.1:19000',
   ];
   const allowedOrigins = [...new Set([...configuredOrigins, ...(isDev ? devOrigins : [])])];
-
-  const isAllowedLocalWebOrigin = (origin: string) => {
-    try {
-      const parsed = new URL(origin);
-      const host = parsed.hostname.toLowerCase();
-      return host === 'localhost' || host === '127.0.0.1' || host === '::1';
-    } catch {
-      return false;
-    }
-  };
 
   app.enableCors({
     origin: (origin, callback) => {
@@ -93,7 +126,7 @@ async function bootstrap() {
         return;
       }
 
-      if (isDev && isAllowedLocalWebOrigin(normalizedOrigin)) {
+      if (isDev && isAllowedDevOrigin(normalizedOrigin)) {
         callback(null, true);
         return;
       }
