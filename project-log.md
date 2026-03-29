@@ -867,3 +867,45 @@ px tsc --noEmit (frontend) passed.
 - Files: `PROJECT_CONTEXT.md`, `project-log.md`
 - Reason: Keep mandatory docs synchronized with runtime behavior and integration requirements.
 - Test: Manual verification of appended entries.
+
+## 2026-03-26 19:00
+- Change: Changed the frontend web entry so `http://localhost:8081/` defaults to the host web app; mobile/player web flow still wins when join/auth query params (`joinCode`, `sessionId`, `code`, `auth_code`, `state`, `error`) are present.
+- Files: `beatbrain-frontend/App.tsx`
+- Reason: Expo Web was opening the mobile app on `/`, even though the intended browser entry for local host mode is the host UI.
+- Test: `npx tsc -p tsconfig.json --noEmit` in `beatbrain-frontend`.
+
+## 2026-03-26 19:00
+- Change: Updated frontend/backend docs for the new web-root host behavior and clarified that host OAuth returns to `/host/start`.
+- Files: `beatbrain-frontend/README.md`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Keep required run/auth documentation synchronized with the changed frontend routing behavior.
+- Test: Manual verification of updated docs.
+
+## 2026-03-29 00:00
+- Change: Fixed a choose-screen regression in the mobile controller. Shared in-flight playlist loads now return a structured result to the visible caller, so `Choose Quiz` still shows loading/error UI instead of staying blank when a background prefetch started first.
+- Files: `beatbrain-frontend/src/mobile/hooks/useBeatBrainController.ts`
+- Reason: The choose screen could reuse a non-UI background `/choose` request and then return early without ever applying success/error state, leaving the screen empty although the backend was fine.
+- Test: `npx tsc --noEmit` in `beatbrain-frontend`; direct backend check `GET http://127.0.0.1:3000/choose` with a locally signed host JWT returned `200` and `42` playlists with cover URLs.
+
+## 2026-03-29 00:00
+- Change: Hardened multiplayer join networking. Host-web QR links now include `backendUrl` when available; mobile player join consumes that override, and both host/mobile Socket.IO clients now allow `websocket` plus `polling` fallback.
+- Files: `beatbrain-frontend/src/shared/config.ts`, `beatbrain-frontend/src/shared/net/beatbrainApi.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-frontend/src/mobile/hooks/useBeatBrainController.ts`, `beatbrain-frontend/src/mobile/navigation/AppRouter.tsx`, `beatbrain-frontend/src/mobile/screens/MultiplayerJoinView.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Player join needed to adopt the correct backend base from QR/deep links, and WebSocket-only transport was too brittle for device/network combinations where HTTP works but the direct WebSocket handshake is unstable.
+- Test: `npx tsc --noEmit` in `beatbrain-frontend`; local Socket.IO probe connected with `polling`; end-to-end local host/createLobby + player/join test succeeded (`playerCount: 1`, transport `polling`).
+
+## 2026-03-29 00:00
+- Change: Added an `8s` abort timeout to shared frontend API requests so unreachable backend calls fail with a surfaced `ApiHttpError` instead of leaving `Choose Quiz` spinning forever.
+- Files: `beatbrain-frontend/src/shared/net/apiClient.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: On a real phone, both singleplayer choose loading and multiplayer join can hit the same backend reachability problem. The app needed to fail fast with a clear backend-unreachable message instead of waiting indefinitely on `fetch`.
+- Test: `npx tsc --noEmit` in `beatbrain-frontend`; backend health checks `GET http://127.0.0.1:3000/health` and `GET http://192.168.2.237:3000/health` both returned `{"status":"ok"}` on the host machine.
+
+## 2026-03-29 00:00
+- Change: Removed the last hardcoded dev host dependency from startup/networking. `start-frontend.bat` now auto-detects the current machine's LAN IPv4 for `EXPO_PUBLIC_API_BASE_URL` and `REACT_NATIVE_PACKAGER_HOSTNAME`, supports an optional backend override argument, and backend CORS now accepts private LAN dev origins on ports `8081`, `19006`, and `19000` instead of only one fixed `192.168.*` origin.
+- Files: `beatbrain-frontend/start-frontend.bat`, `beatbrain-backend/src/main.ts`, `beatbrain-frontend/README.md`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Hosting from another laptop in the same network should work without editing a hardcoded IP in the repo. The previous setup still baked one machine's address into frontend startup and backend CORS.
+- Test: `npx tsc --noEmit` in `beatbrain-backend`; LAN IP autodetect probes returned `192.168.2.237`; CORS preflight with `Origin: http://192.168.2.50:8081` now returns `204` plus `Access-Control-Allow-Origin: http://192.168.2.50:8081`.
+
+## 2026-03-29 00:00
+- Change: Reworked the host web UI around a clearer big-screen presentation. Header copy, login, lobby, setup, quiz and results screens now explicitly frame the host as a large-display stage, with stronger visual hierarchy, bigger action surfaces and a more readable live-quiz layout that prioritizes question, timer and reveal state.
+- Files: `beatbrain-frontend/src/host/components/HostHeader.tsx`, `beatbrain-frontend/src/host/components/HostLayout.tsx`, `beatbrain-frontend/src/host/screens/HostLoginScreen.tsx`, `beatbrain-frontend/src/host/screens/HostLobbyScreen.tsx`, `beatbrain-frontend/src/host/screens/HostSetupModeScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizSetupScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizCreateScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizScreen.tsx`, `beatbrain-frontend/src/host/screens/HostResultsScreen.tsx`
+- Reason: The previous host frontend did not communicate strongly enough that it belongs on a TV/laptop/beamer and did not give the live question/timer state enough dominance for a time-based room experience.
+- Test: `npx tsc --noEmit` in `beatbrain-frontend`.

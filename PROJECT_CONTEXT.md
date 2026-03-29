@@ -63,6 +63,7 @@
   - Frontend: `cd beatbrain-frontend && npm run start` (alternativ `android`, `ios`, `web`)
   - Frontend LAN (stabiler für Device im selben Netz): `cd beatbrain-frontend && start-frontend-lan.bat` oder `npm run start:lan`
   - Frontend Tunnel (Default für Expo Go/Firewall-Probleme): `cd beatbrain-frontend && start-frontend.bat` oder `start-frontend-tunnel.bat`
+  - Frontend Web/Host: `cd beatbrain-frontend && npm run start:web`; `http://localhost:8081/` oeffnet den Host-Flow und kanonisiert auf `/host/start`.
   - Optional kombiniert: `start-all.bat`
 - Standard-Ports (Frontend-Port, Backend-Port, WS-Port)
   - Backend HTTP-Port: `3000` (deterministisch via `start-backend.bat`, inkl. Port-Freigabe vor Start).
@@ -73,7 +74,7 @@
   - Frontend `EXPO_PUBLIC_API_BASE_URL` muss vom Client erreichbar sein (z.B. LAN-IP bei mobilem Device).
   - Frontend-BAT-Skripte setzen `REACT_NATIVE_PACKAGER_HOSTNAME` automatisch auf eine private IPv4 (bevorzugt `192.168.*`, dann `10.*`, dann `172.16-31.*`) und räumen Port `8081` vor dem Start frei.
   - Für Web-OAuth lokal ist Loopback-Redirect nötig (127.0.0.1/[::1]), nicht 192.168.*.
-  - Backend-CORS erlaubt konfigurierte Origins (`HOST_WEB_ORIGIN`, `PLAYER_APP_ORIGIN`) plus Dev-Origins (`localhost/127.0.0.1` Ports 8081/19006/19000, zusätzlich `192.168.2.237:8081`) sowie lokale Loopback-Hosts.
+  - Backend-CORS erlaubt konfigurierte Origins (`HOST_WEB_ORIGIN`, `PLAYER_APP_ORIGIN`) plus Dev-Origins für Loopback und private LAN-IPv4-Hosts auf Ports `8081`, `19006` und `19000`.
   - Empfohlene konsistente Web-Dev-Kombination: Frontend `http://127.0.0.1:8081`, Backend `http://127.0.0.1:3000`, `HOST_WEB_ORIGIN=http://127.0.0.1:8081`.
 
 # 5) Environment Variablen
@@ -112,7 +113,7 @@
   - Web lokal: `http://127.0.0.1:<PORT>/auth/spotify/callback` oder `http://[::1]:<PORT>/auth/spotify/callback`.
   - Web produktiv: `https://<domain>/.../callback`.
   - Frontend-Sicherheitsfallback: ungültige Web-ENV-Werte (z.B. `localhost`, `192.168.*`, `exp://`) werden im Dev-Flow automatisch auf `http://127.0.0.1:3000/auth/spotify/callback` zurückgesetzt.
-  - Web-Endfluss: Backend redirectet nach erfolgreichem Callback auf `HOST_WEB_ORIGIN?auth_code=...`.
+  - Web-Endfluss: Der Host-Web-Flow uebergibt `redirectOrigin=/host/start`; nach erfolgreichem Callback redirectet das Backend daher auf `HOST_WEB_ORIGIN/host/start?auth_code=...` (bzw. auf das explizit uebergebene Host-Target).
   - Verboten: `exp://`, `http://localhost...`, `http://192.168.x.x...`.
 - Welche Scopes
   - `user-read-private user-read-email playlist-read-private playlist-read-collaborative`.
@@ -169,10 +170,12 @@
   - Host: Lobby erzeugen, Runde starten, Reveal/Next/End steuern; benötigt Host-JWT.
   - Player: Join per Join-Code, Antworten senden; kein Spotify-Login nötig.
 - Join Flow (QR)
-  - Join-Code + QR-Link in Frontend (`beatbrain-login://join?code=...`), Player kann via Deep Link beitreten.
+  - Host-Web-Lobby erzeugt einen QR-/Join-Link auf die Web-Root mit Query-Parametern (`/?joinCode=...`).
+  - Wenn im Host eine LAN-erreichbare Backend-Basis bekannt ist, wird sie zusätzlich als `backendUrl=...` in den Join-Link kodiert.
+  - Mobile Player lesen `joinCode` plus optional `backendUrl` aus QR-Scan oder Deep-Link und nutzen diese Basis für den Player-Join.
 - Transport (WebSocket/HTTP)
   - HTTP für Auth/Playlist/Quiz APIs.
-  - Socket.IO für Lobby-/Round-Realtime.
+  - Socket.IO für Lobby-/Round-Realtime; Frontend-Clients erlauben `websocket` mit `polling`-Fallback statt WebSocket-only.
 - Max Players
   - 10 (Backend enforced in `MultiplayerService`).
 - Game State Authority (Host/Backend)
@@ -251,13 +254,14 @@
   - `beatbrain-backend/tsconfig.json` now sets `compilerOptions.rootDir` to `./src`, so Nest dev output resolves from `dist/main.js` path expectations.
   - `beatbrain-backend/src/main.ts` EADDRINUSE hint now prints a concrete suggestion (`set PORT=<preferred+1>`) instead of malformed text.
 - Root script hardening:
-  - `start-frontend.bat` keeps `EXPO_PUBLIC_API_BASE_URL=http://192.168.2.237:3000`, tries Tunnel by default, auto-falls back to LAN on tunnel failure, preserves exit code, and pauses before close for non-web modes.
+  - `start-frontend.bat` auto-detects the current machine's active LAN IPv4 for `EXPO_PUBLIC_API_BASE_URL` and `REACT_NATIVE_PACKAGER_HOSTNAME`, supports an optional backend override argument, tries Tunnel by default, auto-falls back to LAN on tunnel failure, preserves exit code, and pauses before close for non-web modes.
   - `start-backend.bat` preserves backend exit code, pauses on crash for visible diagnostics, and frees the backend port via PowerShell `Get-NetTCPConnection` (language-independent; no fragile `find \"LISTENING\"` dependency).
   - `start-all.bat` keeps split windows (`cmd /k`) and parameterized mode/port forwarding.
 - Mobile Spotify login completion:
   - Redirect parsing accepts Spotify standard `code` (fallback `auth_code`) and finalizes backend exchange -> app JWT persistence, with dev-safe logging and no full code dump.
 - Host web app:
   - Web route `/host` now renders dedicated host flow (`beatbrain-frontend/src/host/*`) with screens for login, lobby, setup, quiz and results.
+  - Web root `/` defaults to the host flow unless player/mobile query params such as `joinCode`, `sessionId`, `code`, `auth_code`, `state`, or `error` are present.
   - Host socket actions implemented in host UI: `host:createLobby`, `host:startRound`, `host:reveal`, `host:restartQuiz`, `host:returnToMenu`.
   - Big-screen host quiz view includes timer, reveal state, per-option player avatar mapping, playback error panel, and continue-gate visibility (`x/y`).
 - Multiplayer restart/return sync:
@@ -346,8 +350,19 @@
 - Affected backend paths:
   - Quiz seed loading (`limit=min(4*questionCount,100)`) now fetches via `/items`.
   - Playlist-page minimal mapper and all-tracks pagination bootstrap now fetch via `/items`.
+
+# 21) Update 2026-03-29 (Choose UI Race Fix + Multiplayer Join Fallback)
+- Frontend choose-flow stability:
+  - `useBeatBrainController.loadChoosePlaylists(...)` now preserves UI loading/error state even when a background playlist prefetch is already in flight.
+  - The choose screen no longer stays blank when the visible screen reuses an earlier non-UI request; the foreground caller now receives the shared result and renders success/error deterministically.
+  - Shared frontend HTTP requests now abort after `8s` and surface a backend-unreachable error instead of leaving `Choose Quiz` in an endless loading state when the device cannot reach the backend host.
+- Multiplayer join robustness:
+  - Host-web join QR now forwards `backendUrl` when available so mobile players can adopt the correct backend base automatically.
+  - Mobile player join reads that backend override from QR/deep links and uses it for Socket.IO/Auth requests.
+  - Host and mobile Socket.IO clients now allow `polling` fallback in addition to `websocket`, improving join reliability on restrictive device/network paths.
+  - Frontend startup no longer depends on a hardcoded developer IP; the launcher now derives the current machine's LAN IP automatically, while backend CORS accepts private LAN dev origins on the standard Expo/web ports.
   - Dev diagnostics endpoint `POST /dev/spotify/playlistTest` now tests `/items` directly.
-- OAuth/Login flow, redirects, ports, and start scripts remain unchanged.
+- OAuth/Login flow, redirects, and ports remain unchanged.
 
 # 21) Update 2026-02-21 (Playback Device Cache to Reduce Spotify Calls)
 - Spotify playback request minimization:
@@ -509,23 +524,3 @@
   - iOS App als echter Build verteilen (TestFlight/App Store), nicht Expo Dev-Server-abhaengig.
 - Hinweis:
   - Ohne dauerhaftes Backend ist Singleplayer/Spotify-Flow nicht vollstaendig lauffaehig.
-
-# 32) Update 2026-02-28 (Host Web Route Robustness + Backend Dev Env Pin)
-- Host web route recognition hardened:
-  - Frontend App entry now detects host mode for both `/host...` and Expo-style `/--/host...` path prefixes.
-  - Host web controller route parsing/navigation now preserves whichever prefix is active (`/host` or `/--/host`) for parsing, canonicalization and auth redirect origin.
-- Backend startup script behavior:
-  - `beatbrain-backend/start-backend.bat` now enforces `NODE_ENV=development` before `npm run start:dev` and logs the effective value.
-  - Goal: consistent Nest dev startup logging across Windows machines even if global system/user env vars differ.
-
-# 33) Update 2026-02-28 (Reactive Host Mode Detection in App Entry)
-- Frontend host-mode detection in `App.tsx` is now reactive instead of one-shot:
-  - Tracks URL updates via `popstate`, `hashchange`, and patched `history.pushState`/`history.replaceState`.
-  - Re-evaluates host mode when URL changes after initial render.
-- Host mode detection sources:
-  - Path prefixes: `/host...` and `/--/host...`.
-  - Hash prefixes: `#/host...` and `#/--/host...`.
-  - Optional query override: `?app=host` (or `?mode=host`).
-- Goal:
-  - Prevent fallback to mobile UI when dev-server/runtime changes URL shape after app bootstrap.
-
