@@ -536,6 +536,7 @@
   - `beatbrain-frontend/src/host/components/HostPage.tsx`
   - `HostPage` misst den verfuegbaren Viewport-Bereich unterhalb des Host-Headers und setzt das Prinzip `center when there is space, otherwise scroll` um.
   - `beatbrain-frontend/src/host/components/HostLayout.tsx` nutzt `HostPage` zentral fuer alle Host-Screens.
+  - `beatbrain-frontend/src/host/hooks/useHostViewport.ts` liefert host-only Fluid-Sizing aus Browser-Breite und -Hoehe, damit Header, Buttons, Cards und Typografie nicht auf festen 27-Zoll-Groessen beruhen.
 - Verwendete Host-Screens:
   - `HostLoginScreen`
   - `HostLobbyScreen`
@@ -547,7 +548,7 @@
 - Responsive Host-Web-Verhalten:
   - Host-Content nutzt einen zentrierten Max-Width-Container statt fensterbreiter Vollflaechen.
   - Buttons bleiben in moderaten Breiten; mehrspaltige Bereiche fallen je nach Breite von 3-4 Spalten ueber 2-3 Spalten bis auf 1 Spalte zurueck.
-  - Header-/Logo-Abstaende, Content-Padding und wesentliche Typografie reagieren auf Browserbreite.
+  - Header-/Logo-Abstaende, Content-Padding und wesentliche Typografie reagieren fluide auf Browserbreite und Browserhoehe.
 - Host-only Scope:
   - Die Layout-Aenderungen betreffen ausschliesslich den Host-Web-Flow unter `src/host/*`.
   - Mobile App/UI und mobile Navigation wurden nicht angepasst.
