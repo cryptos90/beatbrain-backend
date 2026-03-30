@@ -13,7 +13,7 @@
 # 2) Repository Struktur
 - Kurzer Tree der wichtigsten Ordner (frontend, backend, shared falls vorhanden)
   - `beatbrain-frontend/`
-    - `src/{components,constants,data,hooks,navigation,screens,services,types}`
+    - `src/{components,constants,data,host,hooks,mobile,navigation,screens,services,shared,types}`
     - `assets/` (UI-Assets wie Logo/Icon/Splash)
     - `app.json`, `package.json`, `tsconfig.json`, `.env.example`
   - `beatbrain-backend/`
@@ -23,7 +23,7 @@
   - Root: `README.md`, `project-log.md`, `start-all.bat`
 - Wichtige Dateien (env examples, configs)
   - Backend: `beatbrain-backend/.env.example`, `beatbrain-backend/src/main.ts`, `beatbrain-backend/src/auth/auth.service.ts`
-  - Frontend: `beatbrain-frontend/.env.example`, `beatbrain-frontend/app.json`, `beatbrain-frontend/src/config.ts`, `beatbrain-frontend/src/hooks/useBeatBrainController.ts`
+  - Frontend: `beatbrain-frontend/.env.example`, `beatbrain-frontend/app.json`, `beatbrain-frontend/App.tsx`, `beatbrain-frontend/src/host/components/HostLayout.tsx`, `beatbrain-frontend/src/host/components/HostPage.tsx`, `beatbrain-frontend/src/host/hooks/useHostController.ts`
 
 # 3) Tech Stack
 - Frontend:
@@ -65,6 +65,7 @@
   - Frontend Tunnel (Default für Expo Go/Firewall-Probleme): `cd beatbrain-frontend && start-frontend.bat` oder `start-frontend-tunnel.bat`
   - Frontend Web/Host: `cd beatbrain-frontend && npm run start:web`; `http://localhost:8081/` oeffnet den Host-Flow und kanonisiert auf `/host/start`.
   - Optional kombiniert: `start-all.bat`
+  - Host-Web Layout-Test lokal: `cd beatbrain-frontend && npm run start:web`, dann `http://localhost:8081/host/start` im Browser oeffnen.
 - Standard-Ports (Frontend-Port, Backend-Port, WS-Port)
   - Backend HTTP-Port: `3000` (deterministisch via `start-backend.bat`, inkl. Port-Freigabe vor Start).
   - Optionaler Fallback in `main.ts` nur mit `ALLOW_PORT_FALLBACK=1` (`3000` -> `3001` -> `3002`).
@@ -76,6 +77,7 @@
   - Für Web-OAuth lokal ist Loopback-Redirect nötig (127.0.0.1/[::1]), nicht 192.168.*.
   - Backend-CORS erlaubt konfigurierte Origins (`HOST_WEB_ORIGIN`, `PLAYER_APP_ORIGIN`) plus Dev-Origins für Loopback und private LAN-IPv4-Hosts auf Ports `8081`, `19006` und `19000`.
   - Empfohlene konsistente Web-Dev-Kombination: Frontend `http://127.0.0.1:8081`, Backend `http://127.0.0.1:3000`, `HOST_WEB_ORIGIN=http://127.0.0.1:8081`.
+  - Host-Web Layout-Aenderungen gelten nur fuer den Host-Flow unter `src/host/*`; mobile Screens/Navigation bleiben unveraendert.
 
 # 5) Environment Variablen
 - Backend:
@@ -262,6 +264,7 @@
 - Host web app:
   - Web route `/host` now renders dedicated host flow (`beatbrain-frontend/src/host/*`) with screens for login, lobby, setup, quiz and results.
   - Web root `/` defaults to the host flow unless player/mobile query params such as `joinCode`, `sessionId`, `code`, `auth_code`, `state`, or `error` are present.
+  - Host-Erkennung liegt in `beatbrain-frontend/App.tsx`; nur `Platform.OS === "web"` kann in den Host-Flow gehen.
   - Host socket actions implemented in host UI: `host:createLobby`, `host:startRound`, `host:reveal`, `host:restartQuiz`, `host:returnToMenu`.
   - Big-screen host quiz view includes timer, reveal state, per-option player avatar mapping, playback error panel, and continue-gate visibility (`x/y`).
 - Multiplayer restart/return sync:
@@ -524,3 +527,28 @@
   - iOS App als echter Build verteilen (TestFlight/App Store), nicht Expo Dev-Server-abhaengig.
 - Hinweis:
   - Ohne dauerhaftes Backend ist Singleplayer/Spotify-Flow nicht vollstaendig lauffaehig.
+
+# 32) Update 2026-03-30 (Host Web Layout: center when there is space, otherwise scroll)
+- Neue gemeinsame Host-Layout-Huelle:
+  - `beatbrain-frontend/src/host/components/HostPage.tsx`
+  - `HostPage` misst den verfuegbaren Viewport-Bereich unterhalb des Host-Headers und setzt das Prinzip `center when there is space, otherwise scroll` um.
+  - `beatbrain-frontend/src/host/components/HostLayout.tsx` nutzt `HostPage` zentral fuer alle Host-Screens.
+- Verwendete Host-Screens:
+  - `HostLoginScreen`
+  - `HostLobbyScreen`
+  - `HostSetupModeScreen`
+  - `HostQuizSetupScreen`
+  - `HostQuizCreateScreen`
+  - `HostQuizScreen`
+  - `HostResultsScreen`
+- Responsive Host-Web-Verhalten:
+  - Host-Content nutzt einen zentrierten Max-Width-Container statt fensterbreiter Vollflaechen.
+  - Buttons bleiben in moderaten Breiten; mehrspaltige Bereiche fallen bei schmaleren Browserbreiten sauber auf eine Spalte zurueck.
+  - Header-/Logo-Abstaende und Content-Padding reagieren auf Browserbreite.
+- Host-only Scope:
+  - Die Layout-Aenderungen betreffen ausschliesslich den Host-Web-Flow unter `src/host/*`.
+  - Mobile App/UI und mobile Navigation wurden nicht angepasst.
+- Lokaler Test:
+  - `cd beatbrain-frontend && npm run start:web`
+  - Host im Browser ueber `http://localhost:8081/host/start` testen.
+  - Gepruefte Host-Web-Breakpoints fuer den Layout-Check: `1920x1080`, `1366x768`, `1024x768`, `390x844`.
