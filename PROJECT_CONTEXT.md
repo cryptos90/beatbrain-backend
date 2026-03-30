@@ -529,6 +529,9 @@
   - Ohne dauerhaftes Backend ist Singleplayer/Spotify-Flow nicht vollstaendig lauffaehig.
 
 # 32) Update 2026-03-30 (Host Web Layout: center when there is space, otherwise scroll)
+- Produkt-Rollen:
+  - Host/Web (`beatbrain-frontend/src/host/*`) ist der Browser-Flow fuer den grossen Bildschirm: Login, Session/Lobby, Setup, Live-Quiz und Results.
+  - Mobile (`beatbrain-frontend/src/mobile/*`) bleibt der separate Smartphone-Client zum Joinen und Antworten.
 - Neue gemeinsame Host-Layout-Huelle:
   - `beatbrain-frontend/src/host/components/HostPage.tsx`
   - `HostPage` misst den verfuegbaren Viewport-Bereich unterhalb des Host-Headers und setzt das Prinzip `center when there is space, otherwise scroll` um.
@@ -543,12 +546,12 @@
   - `HostResultsScreen`
 - Responsive Host-Web-Verhalten:
   - Host-Content nutzt einen zentrierten Max-Width-Container statt fensterbreiter Vollflaechen.
-  - Buttons bleiben in moderaten Breiten; mehrspaltige Bereiche fallen bei schmaleren Browserbreiten sauber auf eine Spalte zurueck.
-  - Header-/Logo-Abstaende und Content-Padding reagieren auf Browserbreite.
+  - Buttons bleiben in moderaten Breiten; mehrspaltige Bereiche fallen je nach Breite von 3-4 Spalten ueber 2-3 Spalten bis auf 1 Spalte zurueck.
+  - Header-/Logo-Abstaende, Content-Padding und wesentliche Typografie reagieren auf Browserbreite.
 - Host-only Scope:
   - Die Layout-Aenderungen betreffen ausschliesslich den Host-Web-Flow unter `src/host/*`.
   - Mobile App/UI und mobile Navigation wurden nicht angepasst.
 - Lokaler Test:
   - `cd beatbrain-frontend && npm run start:web`
   - Host im Browser ueber `http://localhost:8081/host/start` testen.
-  - Gepruefte Host-Web-Breakpoints fuer den Layout-Check: `1920x1080`, `1366x768`, `1024x768`, `390x844`.
+  - Gepruefte Host-Web-Breakpoints fuer den Layout-Check: `2560x1440`, `1920x1080`, `1366x768`, `1280x800`, `1024x768`, `820x600`, `390x844`.
