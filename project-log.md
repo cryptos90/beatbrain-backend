@@ -933,3 +933,93 @@ px tsc --noEmit (frontend) passed.
 - Files: `beatbrain-frontend/src/host/hooks/useHostViewport.ts`, `beatbrain-frontend/src/host/components/HostPage.tsx`, `beatbrain-frontend/src/host/components/HostLayout.tsx`, `beatbrain-frontend/src/host/components/HostHeader.tsx`, `beatbrain-frontend/src/host/screens/HostLoginScreen.tsx`, `beatbrain-frontend/src/host/screens/HostSetupModeScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizSetupScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizCreateScreen.tsx`, `beatbrain-frontend/src/host/screens/HostLobbyScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizScreen.tsx`, `beatbrain-frontend/src/host/screens/HostResultsScreen.tsx`, `beatbrain-frontend/src/host/README.md`, `beatbrain-frontend/README.md`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
 - Reason: Laptop-height viewports still exposed a broken host start screen where the session-start CTA could fall below the fold. The host UI needed viewport-driven sizing, not just smaller fixed presets.
 - Test: `npx tsc --noEmit` in `beatbrain-frontend`; host login browser smoke checks on `http://localhost:8081/host/start` at `1440x740`, `1280x700`, `1366x768`, `1920x1080`, plus `1280x600` with verified internal scrolling fallback and no horizontal overflow.
+
+## 2026-03-31 00:00
+- Change: Tightened the host-only responsive system again and removed the noisy tunnel-first launcher behavior. Host screens now use stronger width/height breakpoints (`narrow`, `laptop`, `wide`, `shortHeight`), host actions run through a dedicated `HostActionButton`, the host playlist chooser was rebuilt as a responsive card grid (`HostChoosePlaylistScreen`) instead of a fixed carousel, and stored host JWTs are sanitized before startup playlist loads so stale mobile logins do not immediately trigger `/choose` with `Invalid host JWT`.
+- Files: `beatbrain-frontend/start-frontend.bat`, `beatbrain-frontend/package.json`, `beatbrain-frontend/src/shared/net/hostJwt.ts`, `beatbrain-frontend/src/shared/net/authStorage.ts`, `beatbrain-frontend/src/mobile/hooks/useBeatBrainController.ts`, `beatbrain-frontend/src/host/HostApp.tsx`, `beatbrain-frontend/src/host/hooks/useHostViewport.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-frontend/src/host/components/HostActionButton.tsx`, `beatbrain-frontend/src/host/components/HostPage.tsx`, `beatbrain-frontend/src/host/components/HostLayout.tsx`, `beatbrain-frontend/src/host/components/HostHeader.tsx`, `beatbrain-frontend/src/host/screens/HostLoginScreen.tsx`, `beatbrain-frontend/src/host/screens/HostLobbyScreen.tsx`, `beatbrain-frontend/src/host/screens/HostSetupModeScreen.tsx`, `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizSetupScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizCreateScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizScreen.tsx`, `beatbrain-frontend/src/host/screens/HostResultsScreen.tsx`, `beatbrain-frontend/README.md`, `beatbrain-frontend/src/host/README.md`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The host web flow still broke too easily on 13-inch / short-height browser windows, the old playlist carousel wasted horizontal space, and the default tunnel startup surfaced unnecessary ngrok errors even though LAN is the stable local path. At the same time, stale persisted host JWTs on mobile caused background playlist requests before a valid fresh login existed.
+- Test: `npx tsc -p tsconfig.json --noEmit` in `beatbrain-frontend`; confirmed that `http://127.0.0.1:8081/host/start` responds locally. Full browser validation of protected host routes still requires a real authenticated host/lobby session.
+
+## 2026-03-31 00:00
+- Change: Relaxed endpoint-specific frontend timeouts for slow Spotify-backed flows and improved timeout diagnostics. Shared API requests can now carry a custom `timeoutMs`; `/choose` uses 20s and `POST /quiz/sessions` 25s, while timeout errors now name the concrete request URL instead of always reporting a generic unreachable backend.
+- Files: `beatbrain-frontend/src/shared/net/apiClient.ts`, `beatbrain-frontend/src/shared/net/beatbrainApi.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Host playlist loading can be slower than ordinary local API calls because the backend still has to talk to Spotify. The previous hard 8s client timeout made a slow `/choose` call look like a dead backend even when `GET /health` was fine.
+- Test: `npx tsc -p tsconfig.json --noEmit` in `beatbrain-frontend`; local health checks for both `http://127.0.0.1:3000/health` and `http://192.168.2.237:3000/health` returned `{\"status\":\"ok\"}`.
+
+## 2026-03-31 00:00
+- Change: Reverted the host playlist chooser back to a responsive carousel. `HostChoosePlaylistScreen` now keeps the original horizontal picker feel, scales card widths by viewport size, and uses a more compact bottom selection/CTA card so the start button stays reachable instead of being pushed half below the fold.
+- Files: `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-frontend/README.md`, `beatbrain-frontend/src/host/README.md`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The temporary grid layout changed the intended chooser interaction and still produced a poor fold position for the primary action. The host chooser should preserve the same visual concept across screens and only scale up/down responsively.
+- Test: `npx tsc -p tsconfig.json --noEmit` in `beatbrain-frontend`.
+
+## 2026-03-31 00:00
+- Change: Added a two-step safeguard for Spotify tracks that expose metadata but still cannot be started. Quiz seed loading now requests playability flags (`is_playable`, `restrictions(reason)`) and filters obviously unavailable tracks before they enter the quiz pool, while playback failures that Spotify explicitly reports as track-specific restrictions are mapped to `TRACK_UNPLAYABLE` and auto-skipped in the host multiplayer round-start path before the next round is shown.
+- Files: `beatbrain-backend/src/spotify/spotify.service.ts`, `beatbrain-backend/src/quiz/types/quizSong.ts`, `beatbrain-backend/src/quiz/quiz.service.ts`, `beatbrain-backend/src/multiplayer/multiplayer.gateway.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Some Spotify playlist items still return cover/title/album metadata even though the track cannot actually be played for the current account/market. Those tracks should not create silent host quiz rounds, but global playback problems like missing active device should still surface visibly instead of being skipped.
+- Test: pending
+
+## 2026-03-31 00:00
+- Change: Reworked large-playlist quiz seeding away from a single random contiguous Spotify slice. `getPlaylistQuizSeedSongs(...)` now uses the cached full playlist track list, shuffles the complete set with Fisher-Yates, and then takes the first unique playable tracks for the quiz pool.
+- Files: `beatbrain-backend/src/spotify/spotify.service.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: On very large playlists like `Liked Songs`, the old `offset + limit` strategy effectively kept sampling one local neighborhood per session, which made repeats feel much more common than expected from the full playlist size. Full-playlist shuffle removes that neighborhood bias.
+- Test: `npx tsc --noEmit` in `beatbrain-backend`.
+
+## 2026-04-03 21:45
+- Change: Added a new backend `src/curation/*` module for local curated BeatBrain playlists, including seed configs, normalization/original-release heuristics, deduplication, JSON writer/store, machine-readable reporting, validation scripts, and local curated runtime integration.
+- Files: `beatbrain-backend/src/curation/curation.module.ts`, `beatbrain-backend/src/curation/curation.types.ts`, `beatbrain-backend/src/curation/curation.constants.ts`, `beatbrain-backend/src/curation/curation.utils.ts`, `beatbrain-backend/src/curation/curation.logger.ts`, `beatbrain-backend/src/curation/curation-report.types.ts`, `beatbrain-backend/src/curation/seeds/*`, `beatbrain-backend/src/curation/services/*`, `beatbrain-backend/src/curation/scripts/*`, `beatbrain-backend/src/curation/data/curated-playlists/*`, `beatbrain-backend/src/curation/data/reports/import-report.json`
+- Reason: BeatBrain now needs locally generated curated categories with strict original-release validation and local JSON source-of-truth instead of runtime-heavy Spotify resolving for choose categories.
+- Test: `npm run playlists:import`, `npm run playlists:validate`, `npx tsc -p tsconfig.json --noEmit`, `npm run build`
+
+## 2026-04-03 21:45
+- Change: Switched backend `GET /choose` to local curated playlist data and taught `QuizService.createSession(...)` to use local curated tracks for curated IDs while preserving the old Spotify runtime path for arbitrary custom playlist IDs.
+- Files: `beatbrain-backend/src/app.module.ts`, `beatbrain-backend/src/choose/choose.module.ts`, `beatbrain-backend/src/choose/choose.service.ts`, `beatbrain-backend/src/choose/choose.types.ts`, `beatbrain-backend/src/quiz/quiz.module.ts`, `beatbrain-backend/src/quiz/quiz.service.ts`, `beatbrain-backend/src/quiz/types/quizSong.ts`, `beatbrain-backend/src/spotify/spotify.service.ts`, `beatbrain-backend/nest-cli.json`, `beatbrain-backend/package.json`
+- Reason: Curated categories must be loaded locally at runtime without large Spotify resolve passes, but Create/custom playlist flows must keep working.
+- Test: `npx tsc -p tsconfig.json --noEmit`, `npm run build`, `npm run playlists:validate`
+
+## 2026-04-03 21:45
+- Change: Updated frontend choose-mapping so `/choose` payloads now keep optional `tags`, `decadeTag`, `categoryType`, and `trackCount` when mapping into `PlaylistCard`s for host/mobile choose flows.
+- Files: `beatbrain-frontend/src/shared/types/app.ts`, `beatbrain-frontend/src/shared/net/beatbrainApi.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-frontend/src/mobile/hooks/useBeatBrainController.ts`
+- Reason: Curated decade/genre categories should reach the existing Host/Mobile choose flows without breaking the current UI or quiz-session payload shape.
+- Test: `npx tsc -p tsconfig.json --noEmit` in `beatbrain-frontend`
+
+## 2026-04-03 22:01
+- Change: Added frontend/runtime guards so curated choose categories with too few local tracks for the current question count stay visible but cannot be started as broken quiz sessions. Host/mobile choose screens now surface the local insufficiency directly instead of only failing after a session-create request.
+- Files: `beatbrain-frontend/src/shared/quiz/playlistRequirements.ts`, `beatbrain-frontend/src/shared/types/app.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-frontend/src/host/HostApp.tsx`, `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-frontend/src/mobile/hooks/useBeatBrainController.ts`, `beatbrain-frontend/src/mobile/navigation/AppRouter.tsx`, `beatbrain-frontend/src/mobile/screens/ChooseQuizView.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The curated importer currently has legitimate underfilled categories because Spotify rate-limited the import run. Those categories must not regress the choose/start flow by pretending to be fully playable.
+- Test: pending
+
+## 2026-04-03 22:52
+- Change: Reverted the local curated-import runtime path and switched BeatBrain back to the host's real Spotify playlists filtered by the `BeatBrain_` prefix. `GET /choose` now exposes only owned `BeatBrain_*` playlists, derives decade metadata from the suffix, and `POST /quiz/sessions` again uses the normal Spotify playlist seed path for those playlists. The temporary backend curation module, local curated data, import docs, build asset copy, and import/validate scripts were removed from the active architecture.
+- Files: `beatbrain-backend/src/choose/choose.service.ts`, `beatbrain-backend/src/choose/choose.module.ts`, `beatbrain-backend/src/quiz/quiz.module.ts`, `beatbrain-backend/src/quiz/quiz.service.ts`, `beatbrain-backend/src/spotify/spotify.service.ts`, `beatbrain-backend/src/app.module.ts`, `beatbrain-backend/package.json`, `beatbrain-backend/nest-cli.json`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`, removed `beatbrain-backend/src/curation/*`, removed `beatbrain-backend/docs/playlist-import.md`
+- Reason: The new desired source-of-truth is the host's own Spotify playlists named `BeatBrain_<category>`. Spotify folder metadata is not available through the Web API, so the stable implementation key is the playlist-name prefix, not the Spotify desktop folder.
+- Test: pending
+
+## 2026-04-04 19:21
+- Change: Filtered `before-after-2000` out of the backend question pool whenever a quiz session has a `decadeTag`. Decade playlists already excluded the direct year question variants; this closes the remaining gap so decade categories no longer get trivial `vor oder nach 2000` questions.
+- Files: `beatbrain-backend/src/quiz/quiz.service.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: For decade playlists, `vor oder nach 2000` is not a meaningful challenge even if the loaded Spotify pool happens to contain years on both sides of 2000.
+- Test: pending
+
+## 2026-04-04 19:34
+- Change: Added four new quiz question types across backend and active frontend flows: `Solo Artist oder Band`, `Welcher Song ist der aelteste?`, `Welcher Song ist der neuste?`, and `Welches Cover ist korrekt?`. The backend now emits richer question payloads with `format`/`optionDetails`, includes full `artists[]` metadata for quiz tracks, and uses Spotify track IDs as option values for song-selection/cover questions. The mobile singleplayer/multiplayer UIs now render cover questions as cover-only grids during answer time, and the host reveal screen resolves answer IDs back to readable labels/covers instead of showing raw Spotify IDs.
+- Files: `beatbrain-backend/src/spotify/spotify.service.ts`, `beatbrain-backend/src/quiz/quiz.service.ts`, `beatbrain-frontend/src/shared/types/app.ts`, `beatbrain-frontend/src/mobile/screens/QuizView.tsx`, `beatbrain-frontend/src/mobile/screens/MultiplayerQuizView.tsx`, `beatbrain-frontend/src/host/screens/HostQuizScreen.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: BeatBrain now needs more varied music-knowledge questions, including binary artist classification, relative release-year comparisons, and image-based cover recognition, without breaking the existing choose/quiz/host flows.
+- Test: `npx tsc -p tsconfig.json --noEmit` in `beatbrain-backend`; `npx tsc -p tsconfig.json --noEmit` in `beatbrain-frontend`; `npm run build` in `beatbrain-backend`
+
+## 2026-04-04 20:19
+- Change: Tightened the host reveal layout for many simultaneous answer groups. When more than four reveal tiles are shown, the host quiz screen now keeps them in a single row by shrinking tile spacing, heights, cover thumbnails, typography, and player chips. Player-name text inside those reveal chips is now rendered in navy instead of the old light contrast color.
+- Files: `beatbrain-frontend/src/host/screens/HostQuizScreen.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Year-input rounds can easily produce five distinct reveal tiles (four different wrong years plus the correct answer). The old layout wrapped those tiles and pushed parts of the reveal UI outside the visible host viewport.
+- Test: `npx tsc -p tsconfig.json --noEmit` in `beatbrain-frontend`
+
+## 2026-04-04 20:28
+- Change: Hardened Spotify track-playability handling. The backend now rejects any track with a non-empty Spotify `restrictions.reason` before it enters the quiz pool, mirrors that rule in `QuizService` DTO mapping, and no longer classifies every playback `403` as a generic Premium/scope problem before inspecting the concrete Spotify message. Track-specific playback failures can now be recognized again as `TRACK_UNPLAYABLE`.
+- Files: `beatbrain-backend/src/spotify/spotify.service.ts`, `beatbrain-backend/src/quiz/quiz.service.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Some songs were still reaching gameplay even though Spotify later rejected them during `PUT /me/player/play`. With the old ordering, those failures could look like a generic connection/scope issue even when the Spotify device session was already active and only the specific track was problematic.
+- Test: `npx tsc -p tsconfig.json --noEmit` in `beatbrain-backend`; `npm run build` in `beatbrain-backend`
+
+## 2026-04-04 20:46
+- Change: Added Spotify Web Playback SDK as the default playback path for the web host flow, with the previous backend playback path kept as automatic fallback. The host frontend now loads the browser SDK dynamically, primes a dedicated Spotify Connect browser player, and on each round first tries playback against that SDK device. If browser playback is unavailable or fails, the host falls back to the existing backend `/spotify/player/play` route. Multiplayer round-start payloads now carry a lobby playback mode so the backend knows whether to start playback itself or leave it to the host browser. The Spotify auth scope set now also includes `streaming`.
+- Files: `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-backend/src/multiplayer/multiplayer.gateway.ts`, `beatbrain-backend/src/auth/auth.service.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The browser host should no longer depend primarily on an externally active Spotify device. A host-local browser device is a better default for the Host Mode UX, while the existing backend-driven playback remains valuable as fallback and regression protection.
+- Test: `npx tsc -p tsconfig.json --noEmit` in `beatbrain-frontend`; `npx tsc -p tsconfig.json --noEmit` in `beatbrain-backend`; `npm run build` in `beatbrain-backend`

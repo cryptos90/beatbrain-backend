@@ -10,11 +10,18 @@ import type { QuizSongMinimal } from './types/quizSong';
 
 type AnswerType = 'multiple-choice' | 'binary' | 'year-input';
 
-type QuestionFormat = 'options' | 'year_input';
+type QuestionFormat = 'options' | 'year_input' | 'cover_options';
 
 type YearInputPayload = {
   toleranceYears: number;
   correctYear: number;
+};
+
+type QuestionOptionDetail = {
+  value: string;
+  label: string;
+  coverUrl?: string;
+  subtitle?: string;
 };
 
 type BuiltQuestion = {
@@ -23,6 +30,7 @@ type BuiltQuestion = {
   options: string[];
   format: QuestionFormat;
   payload?: YearInputPayload;
+  optionDetails?: QuestionOptionDetail[];
 };
 
 type QuestionKind =
@@ -32,12 +40,23 @@ type QuestionKind =
   | 'year'
   | 'year-pm2'
   | 'year-pm4'
-  | 'before-after-2000';
+  | 'before-after-2000'
+  | 'solo-or-band'
+  | 'oldest-song'
+  | 'newest-song'
+  | 'cover';
 
 type QuestionTemplate = {
   kind: QuestionKind;
   questionText: string;
-  answerFieldPath: 'name' | 'artistName' | 'albumName' | 'year';
+  answerFieldPath:
+    | 'name'
+    | 'artistName'
+    | 'albumName'
+    | 'year'
+    | 'artistCategory'
+    | 'songSelection'
+    | 'coverSelection';
   answerType: AnswerType;
 };
 
@@ -101,6 +120,30 @@ const QUESTION_POOL: QuestionTemplate[] = [
     questionText: 'Erschien der Song vor oder nach 2000?',
     answerFieldPath: 'year',
     answerType: 'binary',
+  },
+  {
+    kind: 'solo-or-band',
+    questionText: 'Solo Artist oder Band?',
+    answerFieldPath: 'artistCategory',
+    answerType: 'binary',
+  },
+  {
+    kind: 'oldest-song',
+    questionText: 'Welcher Song ist der älteste?',
+    answerFieldPath: 'songSelection',
+    answerType: 'multiple-choice',
+  },
+  {
+    kind: 'newest-song',
+    questionText: 'Welcher Song ist der neuste?',
+    answerFieldPath: 'songSelection',
+    answerType: 'multiple-choice',
+  },
+  {
+    kind: 'cover',
+    questionText: 'Welches Cover ist korrekt?',
+    answerFieldPath: 'coverSelection',
+    answerType: 'multiple-choice',
   },
 ];
 
@@ -168,6 +211,21 @@ export class QuizService {
       return null;
     }
 
+    const restrictionReason = String(song.restrictionReason ?? '')
+      .trim()
+      .toLowerCase();
+    if (song.isPlayable === false) {
+      return null;
+    }
+    if (restrictionReason) {
+      return null;
+    }
+
+    const spotifyTrackUri = String(song.spotifyTrackUri ?? '').trim();
+    if (!spotifyTrackUri || spotifyTrackUri.toLowerCase().startsWith('spotify:local:')) {
+      return null;
+    }
+
     const trackName = String(song.name ?? '').trim();
     const artistName = String(song.artists?.[0] ?? '').trim();
     const albumName = String(song.albumName ?? '').trim();
@@ -188,9 +246,12 @@ export class QuizService {
 
     return {
       id,
-      uri: `spotify:track:${id}`,
+      uri: spotifyTrackUri,
       name: trackName,
       artistName,
+      artists: Array.isArray(song.artists)
+        ? song.artists.map((artist) => String(artist ?? '').trim()).filter(Boolean)
+        : [],
       albumName,
       coverUrl,
       year,
@@ -239,6 +300,236 @@ export class QuizService {
     return '';
   }
 
+  private normalizeOptionLabel(value: string | undefined) {
+    return String(value ?? '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private buildTrackOptionLabel(track: MinimalTrack) {
+    const title = String(track.name ?? '').trim();
+    const artist = String(track.artistName ?? '').trim();
+    if (title && artist) {
+      return `${title} - ${artist}`;
+    }
+    return title || artist;
+  }
+
+  private buildTrackOptionDetail(track: MinimalTrack): QuestionOptionDetail {
+    const subtitleParts = [String(track.artistName ?? '').trim(), String(track.year ?? '').trim()]
+      .filter(Boolean);
+
+    return {
+      value: track.id,
+      label: this.buildTrackOptionLabel(track),
+      ...(track.coverUrl ? { coverUrl: track.coverUrl } : {}),
+      ...(subtitleParts.length ? { subtitle: subtitleParts.join(' • ') } : {}),
+    };
+  }
+
+  private classifyPrimaryArtistType(track: MinimalTrack) {
+    const artists = Array.isArray(track.artists)
+      ? track.artists.map((artist) => String(artist ?? '').trim()).filter(Boolean)
+      : [];
+    if (artists.length !== 1) {
+      return 'unknown' as const;
+    }
+
+    const primaryArtist = String(track.artistName ?? '').trim();
+    if (!primaryArtist) {
+      return 'unknown' as const;
+    }
+
+    const normalized = primaryArtist.toLowerCase();
+    if (
+      normalized.startsWith('the ') ||
+      normalized.includes('&') ||
+      normalized.includes(' feat') ||
+      normalized.includes(' featuring ') ||
+      normalized.includes(' and ') ||
+      normalized.includes(' x ') ||
+      normalized.includes(' + ')
+    ) {
+      return 'band' as const;
+    }
+
+    const bandIndicators = [
+      'band',
+      'orchestra',
+      'ensemble',
+      'choir',
+      'collective',
+      'crew',
+      'gang',
+      'group',
+      'brothers',
+      'bros',
+      'boys',
+      'girls',
+      'trio',
+      'quartet',
+      'quintet',
+      'project',
+      'players',
+      'singers',
+    ];
+    if (bandIndicators.some((indicator) => normalized.includes(indicator))) {
+      return 'band' as const;
+    }
+
+    const tokens = primaryArtist
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter(Boolean);
+
+    if (
+      tokens.length >= 2 &&
+      tokens.length <= 3 &&
+      tokens.every((token) => /^[A-Za-zÀ-ÿ'’.-]+$/.test(token))
+    ) {
+      return 'solo' as const;
+    }
+
+    return 'unknown' as const;
+  }
+
+  private buildSoloOrBandQuestion(track: MinimalTrack): BuiltQuestion | null {
+    const artistType = this.classifyPrimaryArtistType(track);
+    if (artistType === 'unknown') {
+      return null;
+    }
+
+    const correctAnswer = artistType === 'solo' ? 'Solo Artist' : 'Band';
+    const wrongAnswer = correctAnswer === 'Solo Artist' ? 'Band' : 'Solo Artist';
+
+    return {
+      correctAnswer,
+      wrongAnswers: [wrongAnswer],
+      options: shuffle([correctAnswer, wrongAnswer]),
+      format: 'options',
+    };
+  }
+
+  private buildRelativeSongYearQuestion(
+    session: QuizSession,
+    track: MinimalTrack,
+    correctSongId: string,
+    mode: 'oldest' | 'newest',
+  ): BuiltQuestion | null {
+    const correctYear = this.parseYearFromTrack(track.year);
+    if (correctYear === null) {
+      return null;
+    }
+
+    const seenLabels = new Set<string>([
+      this.normalizeOptionLabel(this.buildTrackOptionLabel(track)),
+    ]);
+    const decoys: MinimalTrack[] = [];
+    const candidateTrackIds = shuffle(
+      session.poolTrackIds.filter((trackId) => trackId !== correctSongId),
+    );
+
+    for (const trackId of candidateTrackIds) {
+      const candidate = session.tracksById[trackId];
+      if (!candidate) {
+        continue;
+      }
+
+      const candidateYear = this.parseYearFromTrack(candidate.year);
+      if (candidateYear === null) {
+        continue;
+      }
+
+      const matchesDirection =
+        mode === 'oldest' ? candidateYear > correctYear : candidateYear < correctYear;
+      if (!matchesDirection) {
+        continue;
+      }
+
+      const normalizedLabel = this.normalizeOptionLabel(
+        this.buildTrackOptionLabel(candidate),
+      );
+      if (!normalizedLabel || seenLabels.has(normalizedLabel)) {
+        continue;
+      }
+
+      seenLabels.add(normalizedLabel);
+      decoys.push(candidate);
+      if (decoys.length >= 3) {
+        break;
+      }
+    }
+
+    if (decoys.length < 3) {
+      return null;
+    }
+
+    const optionTracks = shuffle([track, ...decoys]);
+    const optionDetails = optionTracks.map((optionTrack) =>
+      this.buildTrackOptionDetail(optionTrack),
+    );
+
+    return {
+      correctAnswer: correctSongId,
+      wrongAnswers: decoys.map((decoy) => decoy.id),
+      options: optionTracks.map((optionTrack) => optionTrack.id),
+      format: 'options',
+      optionDetails,
+    };
+  }
+
+  private buildCoverQuestion(
+    session: QuizSession,
+    track: MinimalTrack,
+    correctSongId: string,
+  ): BuiltQuestion | null {
+    const correctCoverUrl = String(track.coverUrl ?? '').trim();
+    if (!correctCoverUrl) {
+      return null;
+    }
+
+    const seenCoverUrls = new Set<string>([correctCoverUrl]);
+    const decoys: MinimalTrack[] = [];
+    const candidateTrackIds = shuffle(
+      session.poolTrackIds.filter((trackId) => trackId !== correctSongId),
+    );
+
+    for (const trackId of candidateTrackIds) {
+      const candidate = session.tracksById[trackId];
+      if (!candidate) {
+        continue;
+      }
+
+      const coverUrl = String(candidate.coverUrl ?? '').trim();
+      if (!coverUrl || seenCoverUrls.has(coverUrl)) {
+        continue;
+      }
+
+      seenCoverUrls.add(coverUrl);
+      decoys.push(candidate);
+      if (decoys.length >= 3) {
+        break;
+      }
+    }
+
+    if (decoys.length < 3) {
+      return null;
+    }
+
+    const optionTracks = shuffle([track, ...decoys]);
+    const optionDetails = optionTracks.map((optionTrack) =>
+      this.buildTrackOptionDetail(optionTrack),
+    );
+
+    return {
+      correctAnswer: correctSongId,
+      wrongAnswers: decoys.map((decoy) => decoy.id),
+      options: optionTracks.map((optionTrack) => optionTrack.id),
+      format: 'cover_options',
+      optionDetails,
+    };
+  }
+
   private hasBeforeAndAfter2000(session: QuizSession) {
     let hasBefore = false;
     let hasAfterOrEqual = false;
@@ -271,7 +562,13 @@ export class QuizService {
     const hasBeforeAndAfter = this.hasBeforeAndAfter2000(session);
 
     return QUESTION_POOL.filter((template) => {
-      if (session.decadeTag && (template.kind === 'year' || template.kind === 'year-pm2' || template.kind === 'year-pm4')) {
+      if (
+        session.decadeTag &&
+        (template.kind === 'year' ||
+          template.kind === 'year-pm2' ||
+          template.kind === 'year-pm4' ||
+          template.kind === 'before-after-2000')
+      ) {
         return false;
       }
 
@@ -392,6 +689,32 @@ export class QuizService {
     correctSongId: string,
     template: QuestionTemplate,
   ): BuiltQuestion | null {
+    if (template.kind === 'solo-or-band') {
+      return this.buildSoloOrBandQuestion(track);
+    }
+
+    if (template.kind === 'oldest-song') {
+      return this.buildRelativeSongYearQuestion(
+        session,
+        track,
+        correctSongId,
+        'oldest',
+      );
+    }
+
+    if (template.kind === 'newest-song') {
+      return this.buildRelativeSongYearQuestion(
+        session,
+        track,
+        correctSongId,
+        'newest',
+      );
+    }
+
+    if (template.kind === 'cover') {
+      return this.buildCoverQuestion(session, track, correctSongId);
+    }
+
     if (template.kind === 'before-after-2000') {
       const year = this.parseYearFromTrack(track.year);
       if (year === null) {
@@ -519,9 +842,7 @@ export class QuizService {
     }
 
     this.logger.log(
-      `[pool] playlist=${normalizedPlaylistId} requested=${this.getSeedRequestLimit(
-        normalizedQuestionCount,
-      )} songsLoaded=${seedSongs.length} pool=${session.poolTrackIds.length}`,
+      `[pool] playlist=${normalizedPlaylistId} source=spotify-runtime requested=${this.getSeedRequestLimit(normalizedQuestionCount)} songsLoaded=${seedSongs.length} pool=${session.poolTrackIds.length}`,
     );
 
     this.sessions.set(session.id, session);
@@ -608,6 +929,9 @@ export class QuizService {
             correctAnswer: builtQuestion.correctAnswer,
             wrongAnswers: builtQuestion.wrongAnswers,
             options: builtQuestion.options,
+            ...(builtQuestion.optionDetails
+              ? { optionDetails: builtQuestion.optionDetails }
+              : {}),
             trackInfo: {
               id: track.id,
               uri: track.uri,

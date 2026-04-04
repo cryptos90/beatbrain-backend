@@ -409,7 +409,7 @@ export class AuthService {
       code_challenge_method: 'S256',
       code_challenge: codeChallenge,
       scope:
-        'user-read-private user-read-email playlist-read-private playlist-read-collaborative user-modify-playback-state user-read-playback-state user-read-currently-playing app-remote-control',
+        'user-read-private user-read-email playlist-read-private playlist-read-collaborative user-modify-playback-state user-read-playback-state user-read-currently-playing app-remote-control streaming',
     });
 
     return {

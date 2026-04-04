@@ -118,7 +118,7 @@
   - Web-Endfluss: Der Host-Web-Flow uebergibt `redirectOrigin=/host/start`; nach erfolgreichem Callback redirectet das Backend daher auf `HOST_WEB_ORIGIN/host/start?auth_code=...` (bzw. auf das explizit uebergebene Host-Target).
   - Verboten: `exp://`, `http://localhost...`, `http://192.168.x.x...`.
 - Welche Scopes
-  - `user-read-private user-read-email playlist-read-private playlist-read-collaborative`.
+  - `user-read-private user-read-email playlist-read-private playlist-read-collaborative user-modify-playback-state user-read-playback-state user-read-currently-playing app-remote-control streaming`.
 - Token Handling (refresh, JWT)
   - Spotify Access/Refresh Tokens im Backend Host-Session-Objekt.
   - Dev-Persistenz: Host-Session wird in Development zusätzlich in `beatbrain-backend/.dev-host-session.json` geschrieben/geladen, um Spotify-Debug-Checks nach Backend-Neustart zu erleichtern.
@@ -156,12 +156,26 @@
 - Quiz-Datenobjekt Struktur (Felder)
   - Session-Response: `sessionId`, `playlistId`, `totalSongs`, `songIDs`.
   - Next-Question Response: `done`, `remainingSongIDs`, `question` mit:
-    - `questionObject { questionText, answerFieldPath, answerType }`
-    - `correctSongId`, `correctAnswer`, `wrongAnswers`, `options`
-    - `trackPreviewUrl`
-    - `trackInfo { id, name, artist, album, year, explicit, popularity }`
+    - `questionObject { questionText, answerFieldPath, answerType, format?, payload? }`
+    - `correctSongId`, `correctTrackUri`, `correctAnswer`, `wrongAnswers`, `options`
+    - optional `optionDetails[] { value, label, coverUrl?, subtitle? }`
+    - `trackInfo { id, uri, name, artist, album, coverUrl, year, explicit, popularity }`
 - Question Pool Struktur
-  - Serverseitiger `QUESTION_POOL` mit Fragetypen: Year Input, Artist, Album, Popularity, Explicit (binary), Song Name.
+  - Serverseitiger `QUESTION_POOL` mit Fragetypen:
+    - Songtitel (4 Optionen)
+    - Artist (4 Optionen)
+    - Album (4 Optionen)
+    - Year Multiple Choice (4 Optionen)
+    - Year Input `+/- 2`
+    - Year Input `+/- 4`
+    - `vor oder nach 2000`
+    - `Solo Artist oder Band`
+    - `Welcher Song ist der aelteste?`
+    - `Welcher Song ist der neuste?`
+    - `Welches Cover ist korrekt?`
+  - `oldest-song`, `newest-song` und `cover` verwenden als Antwortwerte Spotify-Track-IDs; die sichtbaren Labels/Cover kommen ueber `optionDetails`.
+  - `cover` setzt `questionObject.format = "cover_options"`, damit das Frontend statt Textbuttons vier Cover-Buttons rendert.
+  - Sessions mit `decadeTag` filtern weiterhin alle jahrbezogenen Fragetypen (`year`, `year-pm2`, `year-pm4`, `before-after-2000`) serverseitig aus.
 - SongID Handling & Cleanup Regeln
   - Session hält `remainingSongIds` + `allTracksById` (dedupliziert über Spotify Track IDs).
   - Pro Frage wird ein Song aus `remainingSongIds` entfernt.
@@ -556,3 +570,94 @@
   - `cd beatbrain-frontend && npm run start:web`
   - Host im Browser ueber `http://localhost:8081/host/start` testen.
   - Gepruefte Host-Web-Breakpoints fuer den Layout-Check: `2560x1440`, `1920x1080`, `1366x768`, `1280x800`, `1024x768`, `820x600`, `390x844`.
+
+# 33) Update 2026-04-03 (BeatBrain_-Spotify-Playlists als aktuelle Choose-Quelle)
+- Aktuelle Source-of-Truth fuer Choose/Quiz:
+  - `GET /choose` liest wieder direkt die Spotify-Playlists des aktuellen Host-Accounts.
+  - Beruecksichtigt werden nur Playlists, die dem aktuellen Host gehoeren und deren Name mit `BeatBrain_` beginnt.
+  - Das Suffix nach `BeatBrain_` bestimmt die BeatBrain-Kategorie, z. B. `BeatBrain_60s`, `BeatBrain_rock`, `BeatBrain_deutsch`.
+- Wichtige Spotify-Einschraenkung:
+  - Spotify stellt ueber die Web API keine belastbare Folder-/Verzeichnis-Struktur aus dem Desktop-Client bereit.
+  - Die BeatBrain-Logik kann deshalb nicht auf den Spotify-Ordner `BeatBrain` filtern, sondern ausschliesslich auf den Playlist-Namenspraefix `BeatBrain_`.
+- Mapping-Regeln:
+  - Jahrzehnte (`60s`, `70s`, `80s`, `90s`, `00s`, `10s`, `20s`) werden als `categoryType=decade` ausgeliefert und bekommen `decadeTag=<suffix>`.
+  - Andere `BeatBrain_`-Suffixe werden als `categoryType=genre` behandelt.
+  - `ChooseService` formatiert daraus die sichtbaren Namen und Tags fuer Host/Mobile (`Decade` oder `Genre`, plus optional `${trackCount} Songs`).
+- Runtime-Datenfluss:
+  - `POST /quiz/sessions` verwendet fuer diese `BeatBrain_`-Playlists wieder den normalen Spotify-Runtime-Pfad (`getPlaylistQuizSeedSongs(...)`).
+  - Es gibt keinen aktiven lokalen curated JSON-Sonderpfad mehr.
+  - Create-/Custom-Playlist-IDs bleiben unveraendert ueber den bisherigen Spotify-Pfad unterstuetzt.
+- Rueckbau des verworfenen Import-Ansatzes:
+  - Die zwischenzeitlich eingefuehrte lokale Curation-Struktur (`src/curation/*`), lokale curated JSON-Dateien, Import-/Validierungs-Skripte und das Build-Asset-Copying wurden wieder aus der aktiven Architektur entfernt.
+  - `AppModule`, `ChooseModule`, `QuizModule`, `package.json` und `nest-cli.json` sind wieder auf die Spotify-basierte Laufzeitlogik reduziert.
+- Frontend-Integration:
+  - Host/Mobile uebernehmen weiterhin optionale Felder wie `tags`, `decadeTag`, `categoryType` und `trackCount` aus `/choose`.
+  - Wenn Spotify fuer eine BeatBrain-Playlist einen plausiblen `tracks.total` liefert und dieser fuer die gewaehlte Fragenanzahl zu klein ist, blockiert das Frontend den Start defensiv statt erst beim Session-Create zu scheitern.
+
+# 34) Update 2026-04-04 (Keine "vor oder nach 2000"-Fragen fuer Jahrzehnt-Playlists)
+- Quiz-Fragelogik:
+  - Sobald eine Session mit `decadeTag` gestartet wurde, werden im Backend jetzt alle jahrbezogenen Fragen konsequent ausgefiltert:
+    - `year`
+    - `year-pm2`
+    - `year-pm4`
+    - `before-after-2000`
+  - Grund: Bei Jahrzehnt-Playlists wie `60s`, `80s`, `90s`, `00s` usw. sind diese Fragen fachlich trivial oder unpassend.
+- Scope:
+  - Betrifft die serverseitige Fragenauswahl in `beatbrain-backend/src/quiz/quiz.service.ts`.
+  - Nicht-Jahrzehnt-Playlists behalten `before-after-2000` weiterhin, aber nur wenn der geladene Track-Pool sowohl Songs vor als auch ab 2000 enthaelt.
+
+# 35) Update 2026-04-04 (Neue Quiz-Fragetypen: Solo/Band, aeltester/neuster Song, korrektes Cover)
+- Backend-Fragelogik:
+  - `QuizService` unterstuetzt jetzt zusaetzlich vier neue Fragetypen:
+    - `solo-or-band`
+    - `oldest-song`
+    - `newest-song`
+    - `cover`
+  - Fuer `solo-or-band` wird der Primary Artist heuristisch als `Solo Artist` oder `Band` klassifiziert; Mehrfach-Artist-Tracks oder unklare Faelle werden defensiv uebersprungen.
+  - Fuer `oldest-song` und `newest-song` wird der aktuelle Song nur dann verwendet, wenn drei eindeutige Vergleichssongs mit sicher aelterem bzw. neuerem Jahr im Session-Pool vorhanden sind.
+  - Fuer `cover` wird der aktuelle Song nur dann verwendet, wenn ein Cover vorhanden ist und drei weitere eindeutige Cover-URLs als Decoys gefunden werden.
+- Payload-/Format-Erweiterung:
+  - Quizfragen koennen jetzt `questionObject.format = "cover_options"` liefern.
+  - Quizfragen koennen `optionDetails[]` mit `value`, `label`, optional `coverUrl` und optional `subtitle` liefern.
+  - Bei `oldest-song`, `newest-song` und `cover` ist `correctAnswer` bewusst die Spotify-Track-ID der richtigen Option; das Frontend mappt diese IDs ueber `optionDetails` wieder auf sichtbare Labels/Cover.
+- Frontend-Rendering:
+  - Mobile Singleplayer und Mobile Multiplayer rendern `cover_options` als 2x2 Cover-Grid.
+  - Waehrend der Beantwortung werden bei Cover-Fragen nur die vier Cover gezeigt; die Textlabels erscheinen erst im Reveal.
+  - Der Host-Screen loest Antwortwerte fuer Reveal-Karten jetzt ebenfalls ueber `optionDetails` auf, damit bei Song-/Cover-Fragen keine rohen Spotify-IDs angezeigt werden.
+- Spotify-Metadaten:
+  - `SpotifyService` und die Quiz-Track-Normalisierung erhalten nun zusaetzlich das komplette `artists[]`-Array pro Track, damit die Solo/Band-Heuristik nicht nur auf einem einzelnen Artist-String basiert.
+
+# 36) Update 2026-04-04 (Host-Reveal verdichtet 5+ Antwort-Kacheln auf eine Reihe)
+- Host-Web Reveal-Layout:
+  - `beatbrain-frontend/src/host/screens/HostQuizScreen.tsx` verdichtet Reveal-Kacheln jetzt automatisch, sobald mehr als vier unterschiedliche Antwort-Gruppen gleichzeitig angezeigt werden.
+  - In diesem Fall werden Spaltenzahl, Tile-Hoehe, Abstaende, Bildgroessen, Schriftgroessen und Spieler-Chips reduziert, damit die Kacheln auf typischen Host-Bildschirmen in einer einzigen Reihe bleiben statt umzubrechen und aus dem sichtbaren Bereich zu laufen.
+  - Die Spielernamen in den Reveal-Chips werden dabei explizit in `Colors.navy` statt in der Hintergrund-/Kontrastfarbe gerendert.
+- Scope:
+  - Betrifft ausschliesslich den Host-Web-Quizscreen; Mobile Quiz, Mobile Multiplayer und Backend-Quizlogik bleiben unveraendert.
+
+# 37) Update 2026-04-04 (Spotify-Playback: Track-Restriktionen frueher filtern, 403 sauber unterscheiden)
+- Backend Spotify-/Quiz-Flow:
+  - `SpotifyService.isTrackPlayable(...)` behandelt jetzt jede nicht-leere Spotify-`restrictions.reason` als unspielbaren Track und laesst solche Songs gar nicht erst in den Quiz-Pool.
+  - `QuizService.mapQuizSongToMinimalTrack(...)` spiegelt dieselbe Regel auf DTO-Ebene, damit keine bereits markierten Restriction-Tracks spaeter doch noch in Sessions gelangen.
+- Playback-Fehlermapping:
+  - `SpotifyService.playTrack(...)` wertet bei fehlgeschlagenem `PUT /me/player/play` jetzt zuerst die konkrete Spotify-Fehlermeldung aus, bevor ein `403` pauschal als Premium-/Scope-Problem behandelt wird.
+  - Track-spezifische Spotify-Fehler wie `restriction violated`, `track unavailable`, Markt-/Katalog-Probleme etc. koennen dadurch wieder als `TRACK_UNPLAYABLE` erkannt werden.
+  - Der bestehende Host-Multiplayer-Pfad kann solche Tracks damit wieder automatisch ueberspringen, statt bei einer vorhandenen Spotify-Verbindung mit einem irrefuehrenden allgemeinen Playback-Fehler stehenzubleiben.
+
+# 38) Update 2026-04-04 (Host-Web nutzt standardmaessig Spotify Web Playback SDK mit Backend-Fallback)
+- Host-Web Playback-Pfad:
+  - Im Host-Modus (`beatbrain-frontend/src/host/*`) ist Browser-Playback jetzt der primaere Standardpfad.
+  - Neue Host-only Service-Datei: `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts`.
+  - Der Host-Browser laedt die Spotify Web Playback SDK dynamisch (`https://sdk.scdn.co/spotify-player.js`), verbindet einen eigenen Spotify-Connect-Player und holt das dafuer benoetigte Access Token ueber den bestehenden Backend-Endpunkt `GET /auth/spotify/token`.
+  - Sobald eine neue Runde startet, versucht der Host zuerst Playback ueber die eigene Web-SDK-`device_id`. Erst wenn das fehlschlaegt, wird automatisch auf den bisherigen Backend-Web-API-Playback-Pfad (`PUT /spotify/player/play` ohne Host-Web-SDK-Devicebindung) zurueckgefallen.
+- Multiplayer-/Backend-Integration:
+  - `host:startRound` traegt jetzt einen Playback-Modus (`host_web_sdk` oder `server`).
+  - Das Backend merkt sich diesen Modus pro Lobby in `MultiplayerGateway`.
+  - Fuer `host_web_sdk` startet der Server die Wiedergabe nicht mehr vorab selbst, sondern ueberlaesst den Start dem Host-Browser nach `round:question`.
+  - Auto-Next-Runden verwenden denselben gemerkten Playback-Modus weiter.
+- Auth-/Runtime-Hinweis:
+  - Fuer die Web Playback SDK ist jetzt zusaetzlich der Spotify-Scope `streaming` im OAuth-Start enthalten.
+  - Bereits eingeloggte Hosts koennen deshalb eine erneute Spotify-Anmeldung benoetigen, damit der Browser-Player wirklich aktiv wird statt staendig auf den Fallback zu gehen.
+- Scope:
+  - Mobile Singleplayer und Mobile Multiplayer bleiben auf ihren bisherigen Playback-Pfaden.
+  - Die bisherige serverseitige Playback-Variante bleibt erhalten und dient im Host-Web-Modus explizit als Fallback.

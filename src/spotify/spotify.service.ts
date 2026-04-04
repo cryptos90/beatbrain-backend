@@ -32,16 +32,26 @@ export type SpotifyPlaylistTrackEntity = {
   type?: string;
   id?: string;
   uri?: string;
+  is_playable?: boolean;
   name?: string;
   preview_url?: string | null;
   duration_ms?: number;
   popularity?: number;
   explicit?: boolean;
+  restrictions?: {
+    reason?: string;
+  };
+  external_ids?: {
+    isrc?: string;
+  };
   artists?: { id?: string; name?: string }[];
   album?: {
     id?: string;
     name?: string;
+    album_type?: string;
     release_date?: string;
+    release_date_precision?: string;
+    total_tracks?: number;
     images?: { url?: string }[];
   };
 };
@@ -57,6 +67,7 @@ export type MinimalTrack = {
   uri: string;
   name: string;
   artistName: string;
+  artists: string[];
   albumName: string;
   coverUrl: string;
   year: string;
@@ -82,16 +93,12 @@ export type SpotifyPlaylistMeta = {
   id: string;
   name: string;
   coverUrl: string;
+  trackCount?: number;
 };
 
 type PlaylistTracksPage = {
   items: SpotifyPlaylistTrackItem[];
   next: string | null;
-};
-
-type PlaylistTracksSeedSongsPage = {
-  items?: SpotifyPlaylistTrackItem[];
-  total?: number;
 };
 
 type SpotifyMeResponse = {
@@ -114,6 +121,16 @@ type PlaylistTracksMinimalPage = {
   items?: SpotifyPlaylistTrackItem[];
   total?: number;
   next?: string | null;
+};
+
+type SpotifyTrackSearchResponse = {
+  tracks?: {
+    items?: SpotifyPlaylistTrackEntity[];
+  };
+};
+
+type SpotifyArtistResponse = {
+  genres?: string[];
 };
 
 type SpotifyDevicesResponse = {
@@ -152,7 +169,6 @@ type CachedResolvedPlaylist = {
 const PLAYLIST_TRACKS_CACHE_TTL_MS = 60_000;
 const RESOLVE_PLAYLIST_CACHE_TTL_MS = 30_000;
 const LAST_KNOWN_PLAYBACK_DEVICE_TTL_MS = 30 * 60_000;
-
 type SpotifyRequestContext = {
   playlistId?: string;
   skipForbiddenDiagnostics?: boolean;
@@ -177,7 +193,6 @@ export class SpotifyService {
   private readonly logger = new Logger(SpotifyService.name);
   private readonly playlistTracksCache = new Map<string, CachedPlaylistTracks>();
   private readonly resolvePlaylistCache = new Map<string, CachedResolvedPlaylist>();
-  private readonly lastSeedOffsetByPlaylist = new Map<string, number>();
   private readonly playbackDeviceByHost = new Map<
     string,
     { id: string; expiresAt: number }
@@ -682,6 +697,9 @@ export class SpotifyService {
           id,
           name: String(item?.name ?? '').trim(),
           coverUrl: String(item?.images?.[0]?.url ?? '').trim(),
+          ...(Number.isFinite(reportedTrackTotal) && reportedTrackTotal > 0
+            ? { trackCount: Math.max(0, Math.floor(reportedTrackTotal)) }
+            : {}),
         });
       }
 
@@ -694,7 +712,7 @@ export class SpotifyService {
 
   private async playlistHasPlayableTracks(playlistId: string) {
     const query =
-      'limit=1&offset=0&market=from_token&fields=items(item(type,id,uri)),total,next';
+      'limit=5&offset=0&market=from_token&fields=items(item(type,id,uri,is_playable,restrictions(reason))),total,next';
     const page = await this.fetchPlaylistItems<PlaylistTracksMinimalPage>(playlistId, query, {
       playlistId,
     });
@@ -707,8 +725,7 @@ export class SpotifyService {
       }
 
       const id = String(track.id ?? '').trim();
-      const uri = String(track.uri ?? '').trim().toLowerCase();
-      if (id && uri && !uri.startsWith('spotify:local:')) {
+      if (id && this.isTrackPlayable(track)) {
         return true;
       }
     }
@@ -747,6 +764,36 @@ export class SpotifyService {
     };
   }
 
+  async searchTracks(query: string, limit = 50, offset = 0) {
+    const normalizedQuery = String(query ?? '').trim();
+    if (!normalizedQuery) {
+      return [] as SpotifyPlaylistTrackEntity[];
+    }
+
+    const safeLimit = Math.max(1, Math.min(10, Math.floor(limit)));
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const payload = await this.spotifyApiFetch<SpotifyTrackSearchResponse>(
+      `/search?type=track&limit=${safeLimit}&offset=${safeOffset}&q=${encodeURIComponent(
+        normalizedQuery,
+      )}`,
+    );
+    return Array.isArray(payload?.tracks?.items) ? payload.tracks.items : [];
+  }
+
+  async getArtistGenres(artistId: string) {
+    const normalizedArtistId = String(artistId ?? '').trim();
+    if (!normalizedArtistId) {
+      return [] as string[];
+    }
+
+    const payload = await this.spotifyApiFetch<SpotifyArtistResponse>(
+      `/artists/${encodeURIComponent(normalizedArtistId)}?fields=genres`,
+    );
+    return Array.isArray(payload?.genres)
+      ? payload.genres.map((genre) => String(genre ?? '').trim()).filter(Boolean)
+      : [];
+  }
+
   async getAllPlaylistTracks(playlistId: string) {
     const now = Date.now();
     const cached = this.playlistTracksCache.get(playlistId);
@@ -776,7 +823,7 @@ export class SpotifyService {
 
   private async fetchAllPlaylistTracksUncached(playlistId: string) {
     const query =
-      'limit=100&fields=items(item(type,id,uri,name,preview_url,duration_ms,popularity,explicit,artists(name),album(name,release_date,images(url)))),next';
+      'limit=100&fields=items(item(type,id,uri,is_playable,restrictions(reason),external_ids(isrc),name,preview_url,duration_ms,popularity,explicit,artists(id,name),album(id,name,album_type,release_date,release_date_precision,total_tracks,images(url)))),next';
     const allItems: SpotifyPlaylistTrackItem[] = [];
     let page = await this.fetchPlaylistItems<PlaylistTracksPage>(playlistId, query, {
       playlistId,
@@ -812,10 +859,49 @@ export class SpotifyService {
     return candidate;
   }
 
-  mapPlaylistTrackItemToQuizSongMinimal(
-    item: SpotifyPlaylistTrackItem,
+  private readTrackRestrictionReason(track: SpotifyPlaylistTrackEntity | null | undefined) {
+    return String(track?.restrictions?.reason ?? '')
+      .trim()
+      .toLowerCase();
+  }
+
+  private hasTrackRestriction(track: SpotifyPlaylistTrackEntity | null | undefined) {
+    return Boolean(this.readTrackRestrictionReason(track));
+  }
+
+  private isTrackPlayable(track: SpotifyPlaylistTrackEntity | null | undefined) {
+    if (!track) {
+      return false;
+    }
+
+    const uri = String(track.uri ?? '').trim();
+    if (!uri || uri.toLowerCase().startsWith('spotify:local:')) {
+      return false;
+    }
+
+    if (track.is_playable === false) {
+      return false;
+    }
+
+    if (this.hasTrackRestriction(track)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private shuffleArray<T>(items: T[]) {
+    const next = [...items];
+    for (let index = next.length - 1; index > 0; index -= 1) {
+      const randomIndex = Math.floor(Math.random() * (index + 1));
+      [next[index], next[randomIndex]] = [next[randomIndex], next[index]];
+    }
+    return next;
+  }
+
+  private mapTrackEntityToQuizSongMinimal(
+    track: SpotifyPlaylistTrackEntity | null | undefined,
   ): QuizSongMinimal | null {
-    const track = this.resolvePlaylistTrackEntity(item);
     if (!track) {
       return null;
     }
@@ -825,11 +911,11 @@ export class SpotifyService {
       return null;
     }
 
-    const uri = String(track.uri ?? '').trim().toLowerCase();
-    if (uri.startsWith('spotify:local:')) {
+    if (!this.isTrackPlayable(track)) {
       return null;
     }
 
+    const spotifyTrackUri = String(track.uri ?? '').trim();
     const artists = Array.isArray(track.artists)
       ? track.artists
           .map((artist) => String(artist?.name ?? '').trim())
@@ -843,11 +929,14 @@ export class SpotifyService {
       ? Number.parseInt(releaseDate.slice(0, 4), 10)
       : null;
     const previewUrl = String(track.preview_url ?? '').trim();
+    const restrictionReason = this.readTrackRestrictionReason(track);
     const explicit = track.explicit;
     const popularity = track.popularity;
+    const isrc = String(track.external_ids?.isrc ?? '').trim();
 
     return {
       spotifyTrackId,
+      spotifyTrackUri,
       name: String(track.name ?? '').trim(),
       artists,
       albumName,
@@ -861,6 +950,9 @@ export class SpotifyService {
           ? Math.max(0, Math.floor(track.duration_ms))
           : 0,
       ...(previewUrl ? { previewUrl } : {}),
+      ...(isrc ? { isrc } : {}),
+      ...(typeof track.is_playable === 'boolean' ? { isPlayable: track.is_playable } : {}),
+      ...(restrictionReason ? { restrictionReason } : {}),
       ...(typeof explicit === 'boolean' ? { explicit } : {}),
       ...(typeof popularity === 'number' ? { popularity } : {}),
     };
@@ -878,48 +970,13 @@ export class SpotifyService {
     const safeQuestionCount = Number.isFinite(questionCount)
       ? Math.max(1, Math.floor(questionCount))
       : 1;
-    const limit = Math.max(1, Math.min(100, safeQuestionCount * 4));
-    const totalTracks = await this.getPlaylistTrackTotal(normalizedPlaylistId);
-    const maxOffset = Math.max(0, totalTracks - limit);
-    const candidateOffsets: number[] = [];
-    if (maxOffset <= 0) {
-      candidateOffsets.push(0);
-    } else {
-      for (let offset = 0; offset <= maxOffset; offset += limit) {
-        candidateOffsets.push(offset);
-      }
-      if (candidateOffsets[candidateOffsets.length - 1] !== maxOffset) {
-        candidateOffsets.push(maxOffset);
-      }
-    }
-    let randomOffset =
-      candidateOffsets[Math.floor(Math.random() * candidateOffsets.length)] ?? 0;
-    const lastOffset = this.lastSeedOffsetByPlaylist.get(normalizedPlaylistId);
-    if (
-      candidateOffsets.length > 1 &&
-      typeof lastOffset === 'number' &&
-      Number.isFinite(lastOffset) &&
-      randomOffset === lastOffset
-    ) {
-      const alternatives = candidateOffsets.filter((value) => value !== lastOffset);
-      randomOffset =
-        alternatives[Math.floor(Math.random() * alternatives.length)] ?? randomOffset;
-    }
-    this.lastSeedOffsetByPlaylist.set(normalizedPlaylistId, randomOffset);
-
-    let page: PlaylistTracksSeedSongsPage;
+    const targetCount = Math.max(1, Math.min(100, safeQuestionCount * 4));
     const songs: QuizSongMinimal[] = [];
     const seenTrackIds = new Set<string>();
-    const query =
-      `limit=${limit}&offset=${randomOffset}&market=from_token&` +
-      'fields=items(item(type,id,uri,name,artists(name),album(name,images(url),release_date),duration_ms,preview_url,explicit,popularity)),total,next,limit,offset';
+    let allTracks: SpotifyPlaylistTrackEntity[];
 
     try {
-      page = await this.fetchPlaylistItems<PlaylistTracksSeedSongsPage>(
-        normalizedPlaylistId,
-        query,
-        { playlistId: normalizedPlaylistId, action: 'spotify_items' },
-      );
+      allTracks = await this.getAllPlaylistTracks(normalizedPlaylistId);
     } catch (error) {
       if (error instanceof HttpException && error.getStatus() === 403) {
         const extractedMessage = this.extractHttpExceptionMessage(error);
@@ -936,9 +993,13 @@ export class SpotifyService {
       throw error;
     }
 
-    const items = Array.isArray(page.items) ? page.items : [];
-    for (const item of items) {
-      const song = this.mapPlaylistTrackItemToQuizSongMinimal(item);
+    const shuffledTracks = this.shuffleArray(allTracks);
+    for (const track of shuffledTracks) {
+      if (songs.length >= targetCount) {
+        break;
+      }
+
+      const song = this.mapTrackEntityToQuizSongMinimal(track);
       if (!song) {
         continue;
       }
@@ -950,9 +1011,7 @@ export class SpotifyService {
     }
 
     this.logger.log(
-      `[seed-load] playlist=${normalizedPlaylistId} requested=${limit} offset=${randomOffset} loaded=${songs.length} total=${Number(
-        page.total ?? totalTracks ?? 0,
-      )}`,
+      `[seed-load] playlist=${normalizedPlaylistId} requested=${targetCount} strategy=full-playlist-random candidates=${allTracks.length} loaded=${songs.length}`,
     );
 
     return songs;
@@ -1063,6 +1122,11 @@ export class SpotifyService {
         uri,
         name: String(track.name ?? ''),
         artistName: String(track.artists?.[0]?.name ?? ''),
+        artists: Array.isArray(track.artists)
+          ? track.artists
+              .map((artist) => String(artist?.name ?? '').trim())
+              .filter(Boolean)
+          : [],
         albumName: String(track.album?.name ?? ''),
         coverUrl: String(track.album?.images?.[0]?.url ?? ''),
         year: this.extractReleaseYear(track.album?.release_date),
@@ -1183,6 +1247,39 @@ export class SpotifyService {
       });
     }
     throw error;
+  }
+
+  private isTrackUnplayablePlaybackFailure(statusCode: number, spotifyMessage: string) {
+    if (statusCode < 400 || statusCode >= 500) {
+      return false;
+    }
+
+    const normalizedMessage = String(spotifyMessage ?? '')
+      .trim()
+      .toLowerCase();
+    if (!normalizedMessage) {
+      return false;
+    }
+
+    if (
+      normalizedMessage.includes('no active device') ||
+      normalizedMessage.includes('premium') ||
+      normalizedMessage.includes('scope')
+    ) {
+      return false;
+    }
+
+    return (
+      normalizedMessage.includes('restriction violated') ||
+      normalizedMessage.includes('track is not playable') ||
+      normalizedMessage.includes('track not playable') ||
+      normalizedMessage.includes('cannot play this track') ||
+      normalizedMessage.includes('cannot play the current track') ||
+      normalizedMessage.includes('track unavailable') ||
+      normalizedMessage.includes('not available in your market') ||
+      normalizedMessage.includes('available in your country') ||
+      normalizedMessage.includes('unplayable')
+    );
   }
 
   private async sendPlaybackStartRequest(params: {
@@ -1325,14 +1422,6 @@ export class SpotifyService {
       });
     }
 
-    if (response.status === 403) {
-      this.throwPlaybackError({
-        statusCode: 403,
-        code: 'FORBIDDEN_OR_SCOPE',
-        message: 'Playback requires Spotify Premium / missing scope.',
-      });
-    }
-
     if (!response.ok) {
       const payload = await this.parseSpotifyResponsePayload<Record<string, any>>(response);
       const spotifyMessage = this.extractSpotifyErrorMessage(
@@ -1351,6 +1440,25 @@ export class SpotifyService {
           message:
             spotifyMessage ||
             'No active Spotify device. Open Spotify and start playing something once.',
+        });
+      }
+
+      if (this.isTrackUnplayablePlaybackFailure(response.status, spotifyMessage)) {
+        this.logger.warn(
+          `[spotify-playback] track rejected by spotify status=${response.status} uri=${normalizedTrackUri} message=${spotifyMessage}`,
+        );
+        this.throwPlaybackError({
+          statusCode: 400,
+          code: 'TRACK_UNPLAYABLE',
+          message: spotifyMessage || 'Selected Spotify track is not playable.',
+        });
+      }
+
+      if (response.status === 403) {
+        this.throwPlaybackError({
+          statusCode: 403,
+          code: 'FORBIDDEN_OR_SCOPE',
+          message: 'Playback requires Spotify Premium / missing scope.',
         });
       }
 

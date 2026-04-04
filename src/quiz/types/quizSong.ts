@@ -1,5 +1,6 @@
 export type QuizSongMinimal = {
   spotifyTrackId: string;
+  spotifyTrackUri: string;
   name: string;
   artists: string[];
   albumName: string;
@@ -8,6 +9,9 @@ export type QuizSongMinimal = {
   releaseYear?: number;
   durationMs: number;
   previewUrl?: string;
+  isrc?: string | null;
+  isPlayable?: boolean;
+  restrictionReason?: string;
   explicit?: boolean;
   popularity?: number;
 };

@@ -1,4 +1,4 @@
-import { BadRequestException, HttpException } from '@nestjs/common';
+import { BadRequestException, HttpException, Logger } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -21,6 +21,7 @@ type HostStartRoundBody = {
   joinCode: string;
   quizSessionId: string;
   timerMs?: number;
+  playbackMode?: 'host_web_sdk' | 'server';
 };
 
 type HostRevealBody = {
@@ -63,6 +64,9 @@ type RoundRevealContext = {
   correctYear?: number;
 };
 
+const MAX_TRACK_UNPLAYABLE_SKIPS = 100;
+type PlaybackMode = 'host_web_sdk' | 'server';
+
 @WebSocketGateway({
   cors: {
     origin: true,
@@ -73,8 +77,10 @@ export class MultiplayerGateway {
   @WebSocketServer()
   server!: Server;
 
+  private readonly logger = new Logger(MultiplayerGateway.name);
   private readonly roundTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly lobbyQuizSessionIds = new Map<string, string>();
+  private readonly lobbyPlaybackModes = new Map<string, PlaybackMode>();
   private readonly lobbyRoundRevealContexts = new Map<string, RoundRevealContext>();
   private readonly autoAdvanceInFlight = new Set<string>();
   private readonly disconnectedPlayerTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -101,6 +107,7 @@ export class MultiplayerGateway {
     for (const joinCode of removedHostLobbies) {
       this.clearRoundTimer(joinCode);
       this.clearLobbyRoundState(joinCode);
+      this.clearLobbyPlaybackMode(joinCode);
       this.cleanupQuizSessionForLobby(joinCode);
       this.clearDisconnectedPlayerCleanupForLobby(joinCode);
     }
@@ -194,6 +201,21 @@ export class MultiplayerGateway {
     this.quizService.deleteSession(quizSessionId);
   }
 
+  private getLobbyPlaybackMode(joinCode: string): PlaybackMode {
+    return this.lobbyPlaybackModes.get(this.normalizeJoinCode(joinCode)) ?? 'server';
+  }
+
+  private setLobbyPlaybackMode(joinCode: string, playbackMode?: PlaybackMode) {
+    this.lobbyPlaybackModes.set(
+      this.normalizeJoinCode(joinCode),
+      playbackMode === 'host_web_sdk' ? 'host_web_sdk' : 'server',
+    );
+  }
+
+  private clearLobbyPlaybackMode(joinCode: string) {
+    this.lobbyPlaybackModes.delete(this.normalizeJoinCode(joinCode));
+  }
+
   private abortSessionIfNoPlayers(joinCode: string) {
     const normalizedJoinCode = this.normalizeJoinCode(joinCode);
     let lobby;
@@ -209,6 +231,7 @@ export class MultiplayerGateway {
 
     this.clearRoundTimer(normalizedJoinCode);
     this.clearLobbyRoundState(normalizedJoinCode);
+    this.clearLobbyPlaybackMode(normalizedJoinCode);
     this.clearDisconnectedPlayerCleanupForLobby(normalizedJoinCode);
     this.cleanupQuizSessionForLobby(normalizedJoinCode);
 
@@ -255,6 +278,12 @@ export class MultiplayerGateway {
     return 'Request failed';
   }
 
+  private emitClientSocketError(client: Socket, error: unknown) {
+    client.emit('exception', {
+      message: this.toSocketErrorMessage(error),
+    });
+  }
+
   private emitRoundReveal(joinCode: string, context: RoundRevealContext) {
     const normalizedJoinCode = this.normalizeJoinCode(joinCode);
     const revealed = this.multiplayerService.reveal(normalizedJoinCode, context);
@@ -298,6 +327,7 @@ export class MultiplayerGateway {
     quizSessionId: string;
     hostJwtSub: string;
     timerMs?: number;
+    playbackMode?: PlaybackMode;
   }) {
     const normalizedJoinCode = this.normalizeJoinCode(input.joinCode);
     const normalizedQuizSessionId = String(input.quizSessionId ?? '').trim();
@@ -308,50 +338,73 @@ export class MultiplayerGateway {
     this.lobbyQuizSessionIds.set(normalizedJoinCode, normalizedQuizSessionId);
     this.clearRoundTimer(normalizedJoinCode);
 
-    const questionPayload = await this.quizService.nextQuestion(normalizedQuizSessionId);
-    if (questionPayload.done || !questionPayload.question) {
-      this.clearRoundTimer(normalizedJoinCode);
-      this.clearLobbyRoundState(normalizedJoinCode);
-      this.cleanupQuizSessionForLobby(normalizedJoinCode);
-      const ended = this.multiplayerService.endGame(normalizedJoinCode);
-      this.server
-        .to(normalizedJoinCode)
-        .emit('game:ended', this.multiplayerService.toPublicLobbyState(ended));
-      return { done: true } as const;
-    }
+    for (let attempt = 0; attempt < MAX_TRACK_UNPLAYABLE_SKIPS; attempt += 1) {
+      const questionPayload = await this.quizService.nextQuestion(normalizedQuizSessionId);
+      if (questionPayload.done || !questionPayload.question) {
+        this.clearRoundTimer(normalizedJoinCode);
+        this.clearLobbyRoundState(normalizedJoinCode);
+        this.cleanupQuizSessionForLobby(normalizedJoinCode);
+        const ended = this.multiplayerService.endGame(normalizedJoinCode);
+        this.server
+          .to(normalizedJoinCode)
+          .emit('game:ended', this.multiplayerService.toPublicLobbyState(ended));
+        return { done: true } as const;
+      }
 
-    const question = questionPayload.question;
-    const timerMs = Math.max(1, Math.floor(input.timerMs ?? 30_000));
-    this.multiplayerService.startQuestion(normalizedJoinCode, question.correctSongId, timerMs);
-    this.lobbyRoundRevealContexts.set(normalizedJoinCode, {
-      correctAnswer: question.correctAnswer,
-      answerType: question.questionObject.answerType,
-      format: question.questionObject.format,
-      toleranceYears: question.questionObject.payload?.toleranceYears,
-      correctYear: question.questionObject.payload?.correctYear,
-    });
+      const question = questionPayload.question;
+      const trackUri = String(question.correctTrackUri ?? '').trim();
+      if (!trackUri) {
+        this.logger.warn(
+          `[quiz] skipping question without track uri joinCode=${normalizedJoinCode} songId=${question.correctSongId}`,
+        );
+        continue;
+      }
 
-    this.server.to(normalizedJoinCode).emit('round:question', {
-      ...questionPayload,
-      timerMs,
-    });
-    this.broadcastLobby(normalizedJoinCode);
-    this.startRoundTimer(normalizedJoinCode, timerMs);
+      let playbackErrorMessage: string | null = null;
+      const playbackMode = input.playbackMode ?? this.getLobbyPlaybackMode(normalizedJoinCode);
+      if (playbackMode !== 'host_web_sdk') {
+        try {
+          await this.spotifyService.startPlayback(trackUri, undefined, 0, input.hostJwtSub);
+        } catch (error) {
+          if (this.isTrackUnplayablePlaybackError(error)) {
+            this.logger.warn(
+              `[quiz] skipping unplayable spotify track joinCode=${normalizedJoinCode} songId=${question.correctSongId}`,
+            );
+            continue;
+          }
+          playbackErrorMessage = this.toPlaybackErrorMessage(error);
+        }
+      }
 
-    try {
-      await this.spotifyService.startPlayback(
-        question.correctTrackUri,
-        undefined,
-        0,
-        input.hostJwtSub,
-      );
-    } catch (error) {
-      this.server.to(normalizedJoinCode).emit('round:playbackError', {
-        message: this.toPlaybackErrorMessage(error),
+      const timerMs = Math.max(1, Math.floor(input.timerMs ?? 30_000));
+      this.multiplayerService.startQuestion(normalizedJoinCode, question.correctSongId, timerMs);
+      this.lobbyRoundRevealContexts.set(normalizedJoinCode, {
+        correctAnswer: question.correctAnswer,
+        answerType: question.questionObject.answerType,
+        format: question.questionObject.format,
+        toleranceYears: question.questionObject.payload?.toleranceYears,
+        correctYear: question.questionObject.payload?.correctYear,
       });
+
+      this.server.to(normalizedJoinCode).emit('round:question', {
+        ...questionPayload,
+        timerMs,
+      });
+      this.broadcastLobby(normalizedJoinCode);
+      this.startRoundTimer(normalizedJoinCode, timerMs);
+
+      if (playbackErrorMessage) {
+        this.server.to(normalizedJoinCode).emit('round:playbackError', {
+          message: playbackErrorMessage,
+        });
+      }
+
+      return questionPayload;
     }
 
-    return questionPayload;
+    throw new BadRequestException(
+      'Could not find a playable Spotify track for the next round.',
+    );
   }
 
   private async autoStartNextRound(joinCode: string) {
@@ -383,6 +436,7 @@ export class MultiplayerGateway {
         quizSessionId,
         hostJwtSub: lobby.hostJwtSub,
         timerMs: lobby.roundTimerMs ?? 30_000,
+        playbackMode: this.getLobbyPlaybackMode(normalizedJoinCode),
       });
     } catch (error) {
       this.server.to(normalizedJoinCode).emit('exception', {
@@ -442,6 +496,23 @@ export class MultiplayerGateway {
     return 'Playback request failed';
   }
 
+  private readHttpExceptionCode(error: unknown) {
+    if (!(error instanceof HttpException)) {
+      return '';
+    }
+
+    const response = error.getResponse();
+    if (response && typeof response === 'object') {
+      return String((response as { code?: unknown }).code ?? '').trim();
+    }
+
+    return '';
+  }
+
+  private isTrackUnplayablePlaybackError(error: unknown) {
+    return this.readHttpExceptionCode(error) === 'TRACK_UNPLAYABLE';
+  }
+
   private broadcastLobby(joinCode: string) {
     try {
       const lobby = this.multiplayerService.getLobby(joinCode);
@@ -460,6 +531,7 @@ export class MultiplayerGateway {
   ) {
     const hostJwt = this.assertHost(body.hostJwt);
     const lobby = this.multiplayerService.createLobby(client.id, hostJwt.sub);
+    this.setLobbyPlaybackMode(lobby.joinCode, 'server');
 
     client.join(lobby.joinCode);
     const state = this.multiplayerService.toPublicLobbyState(lobby);
@@ -472,29 +544,50 @@ export class MultiplayerGateway {
     @ConnectedSocket() client: Socket,
     @MessageBody() body: PlayerJoinBody,
   ) {
-    const normalizedPlayerSessionId = String(body.playerSessionId ?? '').trim();
-    const joined = normalizedPlayerSessionId
-      ? this.multiplayerService.reconnectPlayer(
-          body.joinCode,
-          client.id,
-          normalizedPlayerSessionId,
-        )
-      : this.multiplayerService.addPlayer(
-          body.joinCode,
-          client.id,
-          body.name,
-          body.avatarDataUrl,
+    const normalizedJoinCode = this.normalizeJoinCode(body?.joinCode ?? '');
+    const normalizedPlayerSessionId = String(body?.playerSessionId ?? '').trim();
+
+    try {
+      if (!normalizedJoinCode) {
+        throw new BadRequestException('Session ID is required');
+      }
+
+      const joined = normalizedPlayerSessionId
+        ? this.multiplayerService.reconnectPlayer(
+            normalizedJoinCode,
+            client.id,
+            normalizedPlayerSessionId,
+          )
+        : this.multiplayerService.addPlayer(
+            normalizedJoinCode,
+            client.id,
+            body?.name,
+            body?.avatarDataUrl,
+          );
+
+      this.cancelDisconnectedPlayerCleanup(joined.lobby.joinCode, joined.playerSessionId);
+
+      client.join(joined.lobby.joinCode);
+      client.emit('player:session', {
+        joinCode: this.normalizeJoinCode(joined.lobby.joinCode),
+        playerSessionId: joined.playerSessionId,
+      });
+      this.broadcastLobby(joined.lobby.joinCode);
+      return this.multiplayerService.toPublicLobbyState(joined.lobby);
+    } catch (error) {
+      if (error instanceof HttpException) {
+        this.logger.warn(
+          `player:join rejected joinCode=${normalizedJoinCode || '<empty>'} reason=${this.toSocketErrorMessage(error)}`,
         );
-
-    this.cancelDisconnectedPlayerCleanup(joined.lobby.joinCode, joined.playerSessionId);
-
-    client.join(joined.lobby.joinCode);
-    client.emit('player:session', {
-      joinCode: this.normalizeJoinCode(joined.lobby.joinCode),
-      playerSessionId: joined.playerSessionId,
-    });
-    this.broadcastLobby(joined.lobby.joinCode);
-    return this.multiplayerService.toPublicLobbyState(joined.lobby);
+      } else {
+        this.logger.error(
+          `player:join failed joinCode=${normalizedJoinCode || '<empty>'}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
+      this.emitClientSocketError(client, error);
+      return null;
+    }
   }
 
   @SubscribeMessage('host:startRound')
@@ -516,11 +609,13 @@ export class MultiplayerGateway {
       throw new BadRequestException('Waiting for players to continue');
     }
 
+    this.setLobbyPlaybackMode(normalizedJoinCode, body.playbackMode);
     return this.startRoundFromSession({
       joinCode: normalizedJoinCode,
       quizSessionId: body.quizSessionId,
       hostJwtSub: hostJwt.sub,
       timerMs: body.timerMs,
+      playbackMode: body.playbackMode,
     });
   }
 
@@ -638,6 +733,7 @@ export class MultiplayerGateway {
     }
     this.clearRoundTimer(body.joinCode);
     this.clearLobbyRoundState(body.joinCode);
+    this.clearLobbyPlaybackMode(body.joinCode);
     this.cleanupQuizSessionForLobby(body.joinCode);
     const endedLobby = this.multiplayerService.endGame(body.joinCode);
     this.server
@@ -658,6 +754,7 @@ export class MultiplayerGateway {
     }
     this.clearRoundTimer(body.joinCode);
     this.clearLobbyRoundState(body.joinCode);
+    this.clearLobbyPlaybackMode(body.joinCode);
     this.cleanupQuizSessionForLobby(body.joinCode);
     const resetLobby = this.multiplayerService.resetGame(body.joinCode);
     const publicState = this.multiplayerService.toPublicLobbyState(resetLobby);
@@ -678,6 +775,7 @@ export class MultiplayerGateway {
     }
     this.clearRoundTimer(body.joinCode);
     this.clearLobbyRoundState(body.joinCode);
+    this.clearLobbyPlaybackMode(body.joinCode);
     this.cleanupQuizSessionForLobby(body.joinCode);
     const menuLobby = this.multiplayerService.clearToMenu(body.joinCode);
     const publicState = this.multiplayerService.toPublicLobbyState(menuLobby);
