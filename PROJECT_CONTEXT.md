@@ -661,3 +661,162 @@
 - Scope:
   - Mobile Singleplayer und Mobile Multiplayer bleiben auf ihren bisherigen Playback-Pfaden.
   - Die bisherige serverseitige Playback-Variante bleibt erhalten und dient im Host-Web-Modus explizit als Fallback.
+# 39) Update 2026-04-05 (Host Web Responsive System + Preview QA Routes)
+- Host-Web Responsive System:
+  - `beatbrain-frontend/src/host/hooks/useHostViewport.ts` definiert jetzt die host-only Breakpoint-Baender:
+    - `verySmall <= 359`
+    - `small 360-479`
+    - `mobile 480-767`
+    - `tablet 768-1023`
+    - `laptop 1024-1279`
+    - `desktop 1280-1599`
+    - `wide >= 1600`
+  - Zusatzflags fuer Host-Web:
+    - `largeDisplay >= 2440`
+    - `4K >= 3840` oder `2160` Hoehe
+    - `shortHeight < 700`
+    - `veryShortHeight < 580`
+    - `landscapePhone <= 932x430`
+  - Host-only Tokens liefern jetzt fluide Typografie, Spacing, Radius, Control-Min-Heights und Content-Max-Breiten ueber `fluidBetween(...)` / `fluid(...)`.
+- Neue gemeinsame Host-Komponenten:
+  - `beatbrain-frontend/src/host/components/HostScreenContainer.tsx`
+  - `beatbrain-frontend/src/host/components/HostPanel.tsx`
+  - `beatbrain-frontend/src/host/components/HostActionBar.tsx`
+  - `beatbrain-frontend/src/host/components/HostResponsiveGrid.tsx`
+  - `beatbrain-frontend/src/host/components/HostPlayerAvatar.tsx`
+- Layout-/UI-Verhalten:
+  - `HostPage` nutzt den verbleibenden Bereich unter Header/Notice, `100dvh` auf Web und vertikales Scrollen statt Clipping oder Zoom-Workarounds.
+  - Login, Lobby, Setup, Choose, Create, Quiz und Results wurden auf dieselben Host-Primitives umgestellt.
+  - Die Host-Playlist-Auswahl ist kein horizontales Carousel mehr; `HostChoosePlaylistScreen` nutzt jetzt ein responsives Kartenraster.
+  - Quiz-Reveal-Antworten nutzen jetzt ein umbruchfaehiges Grid; das fruehere `nowrap`-Dense-Layout wurde entfernt.
+  - CTA-Reihen stacken oder umbrechen ueber `HostActionBar`; Spieler- und Ergebnisbereiche reagieren ueber containerbasierte Breitenmessung in `HostResponsiveGrid`.
+  - Fehlende Avatar-Bilder brechen die UI nicht mehr; `HostPlayerAvatar` rendert Fallback-Initialen.
+- Browser-only Preview QA Routes:
+  - Neue Host-Web-Vorschau unter `/host/preview/*`, gerendert ueber `beatbrain-frontend/src/host/HostPreviewApp.tsx`.
+  - Preview-Screens:
+    - `/host/preview/login`
+    - `/host/preview/lobby`
+    - `/host/preview/setup`
+    - `/host/preview/create`
+    - `/host/preview/choose`
+    - `/host/preview/quiz-question`
+    - `/host/preview/quiz-reveal`
+    - `/host/preview/results`
+  - Zweck:
+    - reproduzierbare Responsive-QA fuer alle Host-Screens ohne Abhaengigkeit von Spotify-/Socket-Livezustand
+    - dieselben Screen-Komponenten wie im produktiven Host-Flow, aber mit festen Fixture-Daten
+- Lokale Verifikations-Kommandos:
+  - Web-Export fuer QA:
+    - `cd beatbrain-frontend && npx expo export -p web --dev --clear --max-workers 1`
+  - Statischer QA-Server:
+    - `cd beatbrain-frontend && node scripts/serve-dist.cjs dist 8081`
+  - Browser-Responsive-Matrix:
+    - `cd beatbrain-frontend && node scripts/verify-host-responsive.cjs`
+  - Report:
+    - `beatbrain-frontend/test-results/host-responsive/report.json`
+- Gepruefte Host-Screens:
+  - Login
+  - Lobby
+  - Setup
+  - Create
+  - Choose
+  - Quiz Question
+  - Quiz Reveal
+  - Results
+- Gepruefte Viewports:
+  - `320x568`
+  - `360x640`
+  - `375x667`
+  - `390x844`
+  - `414x896`
+  - `568x320`
+  - `640x360`
+  - `768x1024`
+  - `820x1180`
+  - `1024x768`
+  - `1280x800`
+  - `1366x768`
+  - `1440x900`
+  - `1920x1080`
+  - `2440x1440`
+  - `3840x2160`
+- Responsive QA Ergebnis:
+  - `verify-host-responsive.cjs` meldete fuer alle oben genannten Preview-Screens in allen 16 Viewports `failureCount = 0` bzw. keinen horizontalen Overflow.
+- Hinweise:
+  - Produktiver Host-Entry `/host/*` bleibt aktiv und unveraendert fuer Login/Lobby/Quizflow.
+  - Preview-Routen sind browser-only QA-Hilfen und kein mobiler Flow.
+  - Spotify-429-Cooldowns koennen den API-gestuetzten Realflow weiterhin blockieren; die Responsive-QA ist deshalb bewusst von Spotify entkoppelt.
+
+# 40) Update 2026-04-05 (Host Web Laptop-Height Refactor + Internal Scroll QA)
+- Root causes found in the active host web flow:
+  - Several host screens fit the document viewport but still overflowed inside the inner React Native Web `ScrollView`, creating vertical scrollbars or clipped bottom content.
+  - Header/logo/notice spacing was still too large for realistic laptop heights.
+  - `HostActionBar` stacked CTAs on low-height but still wide laptop viewports, wasting vertical space.
+  - `HostChoosePlaylistScreen` showed too much vertical content at once on laptop heights (header card + card grid + separate active-selection card).
+  - `HostLobbyScreen`, `HostResultsScreen`, and `HostQuizScreen` still used stage arrangements that were too tall for laptop-height reveal/lobby/result states.
+- Shared responsive system changes:
+  - `beatbrain-frontend/src/host/hooks/useHostViewport.ts` now adds height-aware flags:
+    - `compactHeight < 860`
+    - `lowHeight < 760`
+    - `veryLowHeight < 680`
+  - Host spacing, panel padding, radii, typography, control heights, and page padding now also use a height-density scale in addition to width-based fluid sizing.
+  - `beatbrain-frontend/src/host/components/HostPage.tsx` now reduces top/bottom page padding on low heights and only enables scroll when content really exceeds the measured viewport.
+  - `beatbrain-frontend/src/host/components/HostHeader.tsx` was compacted further for laptop heights (smaller logo, tighter badge/copy spacing).
+  - `beatbrain-frontend/src/host/components/HostActionBar.tsx` no longer stacks just because the viewport is short; it now stacks only for genuinely narrow/mobile/landscape-phone layouts.
+- Screen-specific host web behavior:
+  - Login:
+    - Step cards and status panel were compacted for low laptop heights.
+  - Lobby:
+    - Session/QR stage is denser.
+    - Player stage now uses denser multi-column distribution on laptop/desktop widths so all five preview players fit without vertical scrolling at the main laptop/desktop checkpoints.
+  - Choose:
+    - On laptop-height layouts the selected playlist summary/CTA is integrated into the top summary panel instead of rendering a second large footer card below the playlist grid.
+    - Playlist cover cards use flatter aspect ratios on tighter heights.
+  - Quiz reveal:
+    - Answer cards are more compact.
+    - Song info + next-question readiness are merged into one compact combined footer on laptop/desktop heights.
+  - Results:
+    - More columns are used on laptop/desktop widths.
+    - Result cards and action area are denser so the primary results stage stays within the viewport at the main laptop/desktop checkpoints.
+- Verification/tooling changes:
+  - `beatbrain-frontend/scripts/verify-host-responsive.cjs` no longer checks only document overflow.
+  - It now also detects internal scrollable overflow regions (`overflow-y: auto|scroll|overlay`) and records them in `beatbrain-frontend/test-results/host-responsive/report.json`.
+  - The QA viewport matrix now also includes additional low-height/manual-window cases:
+    - `900x650`
+    - `1024x640`
+    - `1280x680`
+    - `1366x650`
+    - `1536x864`
+- Verified host screens:
+  - Login
+  - Lobby
+  - Setup
+  - Create
+  - Choose
+  - Quiz Question
+  - Quiz Reveal
+  - Results
+- Verified laptop/desktop pass set (no horizontal overflow and no internal vertical scroll regions):
+  - `1280x800`
+  - `1366x768`
+  - `1440x900`
+  - `1536x864`
+  - `1920x1080`
+  - `2440x1440`
+  - `3840x2160`
+- Known remaining host-web issues:
+  - Several ultra-narrow / smartphone-like preview viewports still require vertical scrolling on dense host screens (`320x568`, `640x360`, and similar).
+  - Additional low-height preview edge cases still overflow vertically on some screens (`Lobby` at `900x650` / `1024x640`, `Quiz Reveal` at `900x650` / `1024x640` / `1024x768` / `768x1024` / `820x1180`, `Results` at `768x1024` / `1280x680`).
+  - These remaining issues do not affect the core laptop/desktop acceptance set above.
+
+# 41) Update 2026-04-05 (Lobby Player Stage Auto-Fit Instead of Growing by Wrap)
+- Host lobby player-stage behavior:
+  - `beatbrain-frontend/src/host/components/HostPlayerStageGrid.tsx` is a new dedicated host component for the lobby player area.
+  - The lobby player box now keeps a fixed responsive stage height and no longer grows just because additional player cards wrap into more rows.
+  - The component measures the available width and computes row/column distribution and tile size from the actual player count, so player cards shrink to fit the existing stage instead of pushing other UI below the fold.
+  - Rows are rendered explicitly and centered, rather than relying on unconstrained wrap growth.
+- Host lobby screen integration:
+  - `beatbrain-frontend/src/host/screens/HostLobbyScreen.tsx` now uses `HostPlayerStageGrid` for the player area and keeps the empty-state panel aligned with the same stage height.
+- QA/preview update:
+  - `beatbrain-frontend/src/host/HostPreviewApp.tsx` now renders the lobby preview with 10 players to validate the full-capacity host stage.
+  - Verified lobby stage at `1280x800`, `1366x768`, `1440x900`, `1536x864`, and `1920x1080`: no horizontal overflow and no internal vertical scroll region, even with the 10-player preview.
