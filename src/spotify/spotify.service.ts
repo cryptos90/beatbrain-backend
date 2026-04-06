@@ -117,6 +117,10 @@ type PlaylistTrackTotalResponse = {
   };
 };
 
+type PlaylistItemsTotalResponse = {
+  total?: number;
+};
+
 type PlaylistTracksMinimalPage = {
   items?: SpotifyPlaylistTrackItem[];
   total?: number;
@@ -168,6 +172,7 @@ type CachedResolvedPlaylist = {
 
 const PLAYLIST_TRACKS_CACHE_TTL_MS = 60_000;
 const RESOLVE_PLAYLIST_CACHE_TTL_MS = 30_000;
+const PLAYLIST_TRACK_TOTAL_CACHE_TTL_MS = 5 * 60_000;
 const LAST_KNOWN_PLAYBACK_DEVICE_TTL_MS = 30 * 60_000;
 type SpotifyRequestContext = {
   playlistId?: string;
@@ -193,6 +198,10 @@ export class SpotifyService {
   private readonly logger = new Logger(SpotifyService.name);
   private readonly playlistTracksCache = new Map<string, CachedPlaylistTracks>();
   private readonly resolvePlaylistCache = new Map<string, CachedResolvedPlaylist>();
+  private readonly playlistTrackTotalCache = new Map<
+    string,
+    { total: number; expiresAt: number }
+  >();
   private readonly playbackDeviceByHost = new Map<
     string,
     { id: string; expiresAt: number }
@@ -587,6 +596,37 @@ export class SpotifyService {
     return `${hostUserId}:${playlistId}`;
   }
 
+  private getCachedPlaylistTrackTotal(playlistId: string) {
+    const normalizedPlaylistId = String(playlistId ?? '').trim();
+    if (!normalizedPlaylistId) {
+      return null;
+    }
+
+    const cached = this.playlistTrackTotalCache.get(normalizedPlaylistId);
+    if (!cached) {
+      return null;
+    }
+
+    if (Date.now() >= cached.expiresAt) {
+      this.playlistTrackTotalCache.delete(normalizedPlaylistId);
+      return null;
+    }
+
+    return cached.total;
+  }
+
+  private setCachedPlaylistTrackTotal(playlistId: string, total: number) {
+    const normalizedPlaylistId = String(playlistId ?? '').trim();
+    if (!normalizedPlaylistId || !Number.isFinite(total) || total < 0) {
+      return;
+    }
+
+    this.playlistTrackTotalCache.set(normalizedPlaylistId, {
+      total: Math.max(0, Math.floor(total)),
+      expiresAt: Date.now() + PLAYLIST_TRACK_TOTAL_CACHE_TTL_MS,
+    });
+  }
+
   async resolvePlaylists(hostUserId: string, playlistIds: string[]) {
     const uniqueIds = [...new Set(playlistIds.map((id) => id.trim()).filter(Boolean))];
     const now = Date.now();
@@ -634,23 +674,9 @@ export class SpotifyService {
     return results;
   }
 
-  async getCurrentUserPlaylistsMeta(
-    expectedOwnerUserId?: string,
-  ): Promise<SpotifyPlaylistMeta[]> {
+  async getCurrentUserPlaylistsMeta(): Promise<SpotifyPlaylistMeta[]> {
     const playlists: SpotifyPlaylistMeta[] = [];
     const seenPlaylistIds = new Set<string>();
-    const normalizedExpectedOwnerId = String(expectedOwnerUserId ?? '')
-      .trim()
-      .toLowerCase();
-    const tokenUserId = await this.tryResolveSpotifyTokenUserId();
-    const ownerUserId =
-      normalizedExpectedOwnerId || String(tokenUserId ?? '').trim().toLowerCase();
-    if (!ownerUserId) {
-      this.logger.warn(
-        '[choose] could not resolve current spotify user id, returning no playable playlists',
-      );
-      return playlists;
-    }
 
     let nextPath: string | null =
       '/me/playlists?limit=50&fields=items(id,name,images(url),owner(id),tracks(total)),next,total';
@@ -663,35 +689,11 @@ export class SpotifyService {
       const items = Array.isArray(page?.items) ? page.items : [];
       for (const item of items) {
         const id = String(item?.id ?? '').trim();
-        const ownerId = String(item?.owner?.id ?? '')
-          .trim()
-          .toLowerCase();
-        if (!ownerId || ownerId !== ownerUserId) {
-          continue;
-        }
         if (!id || seenPlaylistIds.has(id)) {
           continue;
         }
 
         const reportedTrackTotal = Number(item?.tracks?.total ?? NaN);
-        let hasPlayableTracks = Number.isFinite(reportedTrackTotal)
-          ? reportedTrackTotal > 0
-          : false;
-
-        // Spotify can report tracks.total=0 for some user playlists even though items exist.
-        // Fallback probe keeps choose-list usable for those playlists.
-        if (!hasPlayableTracks) {
-          try {
-            hasPlayableTracks = await this.playlistHasPlayableTracks(id);
-          } catch {
-            hasPlayableTracks = false;
-          }
-        }
-
-        if (!hasPlayableTracks) {
-          continue;
-        }
-
         seenPlaylistIds.add(id);
         playlists.push({
           id,
@@ -708,29 +710,6 @@ export class SpotifyService {
     }
 
     return playlists;
-  }
-
-  private async playlistHasPlayableTracks(playlistId: string) {
-    const query =
-      'limit=5&offset=0&market=from_token&fields=items(item(type,id,uri,is_playable,restrictions(reason))),total,next';
-    const page = await this.fetchPlaylistItems<PlaylistTracksMinimalPage>(playlistId, query, {
-      playlistId,
-    });
-
-    const items = Array.isArray(page?.items) ? page.items : [];
-    for (const item of items) {
-      const track = this.resolvePlaylistTrackEntity(item);
-      if (!track) {
-        continue;
-      }
-
-      const id = String(track.id ?? '').trim();
-      if (id && this.isTrackPlayable(track)) {
-        return true;
-      }
-    }
-
-    return false;
   }
 
   async getPlaylist(playlistId: string) {
@@ -1023,9 +1002,14 @@ export class SpotifyService {
       throw new BadRequestException('Missing playlistId');
     }
 
-    let payload: PlaylistTrackTotalResponse;
+    const cachedTrackTotal = this.getCachedPlaylistTrackTotal(normalizedPlaylistId);
+    if (cachedTrackTotal !== null) {
+      return cachedTrackTotal;
+    }
+
+    let summaryPayload: PlaylistTrackTotalResponse | null = null;
     try {
-      payload = await this.spotifyApiFetch<PlaylistTrackTotalResponse>(
+      summaryPayload = await this.spotifyApiFetch<PlaylistTrackTotalResponse>(
         `/playlists/${encodeURIComponent(normalizedPlaylistId)}?fields=tracks.total`,
         undefined,
         true,
@@ -1046,7 +1030,58 @@ export class SpotifyService {
       }
       throw error;
     }
-    return Number(payload?.tracks?.total ?? 0);
+
+    const summaryTotal = Number(summaryPayload?.tracks?.total ?? NaN);
+    if (Number.isFinite(summaryTotal) && summaryTotal > 0) {
+      const normalizedSummaryTotal = Math.max(0, Math.floor(summaryTotal));
+      this.setCachedPlaylistTrackTotal(normalizedPlaylistId, normalizedSummaryTotal);
+      return normalizedSummaryTotal;
+    }
+
+    let itemsPayload: PlaylistItemsTotalResponse;
+    try {
+      itemsPayload = await this.fetchPlaylistItems<PlaylistItemsTotalResponse>(
+        normalizedPlaylistId,
+        'limit=1&offset=0&fields=total',
+        { playlistId: normalizedPlaylistId },
+      );
+    } catch (error) {
+      if (error instanceof HttpException && error.getStatus() === 403) {
+        const extractedMessage = this.extractHttpExceptionMessage(error);
+        const diagnose = await this.diagnosePlaylistForbidden(
+          normalizedPlaylistId,
+          extractedMessage,
+        );
+        throw this.buildPlaylistForbiddenHttpException(
+          normalizedPlaylistId,
+          diagnose,
+          extractedMessage,
+        );
+      }
+      throw error;
+    }
+
+    const resolvedTrackTotal = Number(itemsPayload?.total ?? 0);
+    const normalizedResolvedTrackTotal =
+      Number.isFinite(resolvedTrackTotal) && resolvedTrackTotal >= 0
+        ? Math.max(0, Math.floor(resolvedTrackTotal))
+        : 0;
+
+    if (
+      (!Number.isFinite(summaryTotal) || summaryTotal <= 0) &&
+      normalizedResolvedTrackTotal > 0
+    ) {
+      this.logger.log(
+        `[spotify] playlist track total resolved via items endpoint playlist=${normalizedPlaylistId} summaryTotal=${Number.isFinite(summaryTotal) ? Math.floor(summaryTotal) : 'n/a'} itemsTotal=${normalizedResolvedTrackTotal}`,
+      );
+    }
+
+    this.setCachedPlaylistTrackTotal(
+      normalizedPlaylistId,
+      normalizedResolvedTrackTotal,
+    );
+
+    return normalizedResolvedTrackTotal;
   }
 
   async getPlaylistTrackPageMinimal(
@@ -1321,6 +1356,26 @@ export class SpotifyService {
     return response;
   }
 
+  private async sendPlaybackTransferRequest(params: {
+    deviceId: string;
+    play?: boolean;
+  }) {
+    const normalizedDeviceId = String(params.deviceId ?? '').trim();
+    const shouldPlay = params.play === true;
+    const { response } = await this.spotifyApiRequest('/me/player', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        device_ids: [normalizedDeviceId],
+        play: shouldPlay,
+      }),
+    });
+
+    return response;
+  }
+
   private resolvePlaybackDeviceId(inputDeviceId?: string, hostUserId?: string) {
     const explicit = String(inputDeviceId ?? '').trim();
     if (explicit) {
@@ -1476,6 +1531,81 @@ export class SpotifyService {
     return {
       ok: true,
       deviceId: resolvedDeviceId || null,
+    };
+  }
+
+  async transferPlayback(input: {
+    deviceId: string;
+    play?: boolean;
+    hostUserId?: string;
+  }) {
+    const normalizedDeviceId = String(input.deviceId ?? '').trim();
+    if (!normalizedDeviceId) {
+      throw new BadRequestException('Missing Spotify device id');
+    }
+
+    const normalizedHostUserId = this.normalizeHostUserId(input.hostUserId);
+
+    let response: Response;
+    try {
+      response = await this.sendPlaybackTransferRequest({
+        deviceId: normalizedDeviceId,
+        play: input.play,
+      });
+    } catch (error) {
+      this.handlePlaybackRequestException(error);
+    }
+
+    if (response.status === 429) {
+      this.throwPlaybackError({
+        statusCode: 429,
+        code: 'RATE_LIMIT',
+        message: 'Spotify API rate limit reached',
+        retryAfterSeconds: this.parseRetryAfterSeconds(response),
+      });
+    }
+
+    if (response.status === 403) {
+      this.throwPlaybackError({
+        statusCode: 403,
+        code: 'FORBIDDEN_OR_SCOPE',
+        message: 'Playback requires Spotify Premium / missing scope.',
+      });
+    }
+
+    if (!response.ok) {
+      const payload = await this.parseSpotifyResponsePayload<Record<string, any>>(response);
+      const spotifyMessage = this.extractSpotifyErrorMessage(
+        payload,
+        response.status,
+        response.statusText,
+      );
+
+      if (
+        response.status === 404 ||
+        spotifyMessage.toLowerCase().includes('no active device')
+      ) {
+        this.clearCachedPlaybackDeviceId(normalizedHostUserId, normalizedDeviceId);
+        this.throwPlaybackError({
+          statusCode: 404,
+          code: 'NO_ACTIVE_DEVICE',
+          message:
+            spotifyMessage ||
+            'Spotify browser device is not available yet. Please try again.',
+        });
+      }
+
+      this.throwPlaybackError({
+        statusCode: response.status,
+        code: 'SPOTIFY_TRANSFER_FAILED',
+        message: spotifyMessage,
+      });
+    }
+
+    this.setCachedPlaybackDeviceId(normalizedHostUserId, normalizedDeviceId);
+    return {
+      ok: true,
+      deviceId: normalizedDeviceId,
     };
   }
 

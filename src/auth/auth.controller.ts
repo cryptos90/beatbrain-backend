@@ -79,6 +79,11 @@ export class AuthController {
     return this.authService.getSpotifyAccessTokenForSdk(authorizationHeader);
   }
 
+  @Get('spotify/status')
+  spotifyStatus(@Headers('authorization') authorizationHeader?: string) {
+    return this.authService.getHostSpotifyStatus(authorizationHeader);
+  }
+
   @Get('me')
   me(@Headers('authorization') authorizationHeader?: string) {
     const jwt = this.authService.verifyHostJwtOrThrow(authorizationHeader);

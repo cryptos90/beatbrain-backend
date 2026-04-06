@@ -1046,3 +1046,99 @@ px tsc --noEmit (frontend) passed.
 - Files: `beatbrain-frontend/src/host/components/HostPlayerStageGrid.tsx`, `beatbrain-frontend/src/host/screens/HostLobbyScreen.tsx`, `beatbrain-frontend/src/host/HostPreviewApp.tsx`, `beatbrain-frontend/src/host/README.md`, `beatbrain-frontend/README.md`, `beatbrain-frontend/docs/host-responsive.md`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
 - Reason: In the lobby stage, additional players must not push other UI below the visible host viewport; the player stage should keep its size and scale tile size instead.
 - Test: `npx tsc --noEmit` in `beatbrain-frontend`; `npx expo export -p web --dev --clear --max-workers 1`; `node scripts/serve-dist.cjs dist 8081`; `node scripts/verify-host-responsive.cjs`. Lobby preview with 10 players passes at `1280x800`, `1366x768`, `1440x900`, `1536x864`, and `1920x1080` with no horizontal overflow and no internal vertical scroll region.
+
+## 2026-04-06 17:34
+- Change: Stabilized the real host-web Spotify playback path. The browser host now primes the Spotify Web Playback SDK more robustly, fetches/refetches SDK tokens via the existing backend auth path, waits for `connect` + `ready`, captures the browser `device_id`, transfers playback explicitly onto that device through a new backend endpoint, waits for the browser device to become active, and only then starts the track. Host playback/setup/socket errors are now mapped to cleaner host-facing messages instead of surfacing raw chained Spotify/browser errors.
+- Files: `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts`, `beatbrain-frontend/src/host/services/hostPlaybackErrorMessage.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-frontend/src/shared/net/beatbrainApi.ts`, `beatbrain-backend/src/spotify/spotify.controller.ts`, `beatbrain-backend/src/spotify/spotify.service.ts`
+- Reason: The previous host-web flow could hit `authentication failed` in the SDK, race the first round against browser-player readiness, and then fall through to backend playback without a valid active browser device, producing the visible `No active device found` cascade.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`; `npm exec tsc -- --noEmit` in `beatbrain-backend`; `npm run build` in `beatbrain-backend`
+
+## 2026-04-06 17:34
+- Change: Replaced the active host choose runtime from a flat/grid list back to a real horizontal carousel/gallery. The live `HostChoosePlaylistScreen` now shows a centered active card with side peeks, snap behavior, card click selection, arrow navigation, and dot navigation while keeping the existing host responsive shell intact.
+- Files: `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-frontend/src/host/screens/HostQuizSetupScreen.tsx`
+- Reason: The productive host choose flow had regressed from the intended gallery/carousel chooser to a list/grid presentation, which no longer matched the mobile choose behavior or the expected host UX.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 17:34
+- Change: Normalized active visible host/mobile quiz texts to real German umlauts where appropriate and unified the reveal/continue CTA to the exact label `Nächste Frage`. Singleplayer cover questions now reveal with the correct cover in green and all wrong covers in red before showing the song info footer.
+- Files: `beatbrain-frontend/src/mobile/screens/QuizView.tsx`, `beatbrain-frontend/src/mobile/screens/MultiplayerQuizView.tsx`, `beatbrain-frontend/src/mobile/hooks/useBeatBrainController.ts`, `beatbrain-frontend/src/mobile/services/spotifyPlaybackService.ts`, `beatbrain-frontend/src/host/screens/HostLoginScreen.tsx`, `beatbrain-frontend/src/host/screens/HostLobbyScreen.tsx`, `beatbrain-frontend/src/host/screens/HostSetupModeScreen.tsx`, `beatbrain-frontend/src/host/screens/HostResultsScreen.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Several active display strings still used `ae` / `oe` / `ue`, and the post-answer CTA/reveal flow was inconsistent with the requested `Nächste Frage` wording and the desired cover-question reveal behavior.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 17:34
+- Change: Removed the extra choose-time Spotify `/playlists/:id/items?limit=5...` probe from `getCurrentUserPlaylistsMeta(...)` and kept playlist filtering on the reported `tracks.total` instead.
+- Files: `beatbrain-backend/src/spotify/spotify.service.ts`
+- Reason: The probe could fan out across many playlists during `/choose`, trigger Spotify `429`, and put the whole backend into a long global cooldown before the user even tried to start a quiz.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-backend`; `npm run build` in `beatbrain-backend`
+
+## 2026-04-06 17:34
+- Change: Relaxed the active `/choose` source filter from “must be owned by the current host” to “must be present in the current host library” while still requiring the playlist name prefix `BeatBrain_`. The host choose empty/error text now also refers to BeatBrain playlists instead of the old curated wording.
+- Files: `beatbrain-backend/src/spotify/spotify.service.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Spotify folders are not exposed by the Web API, and valid `BeatBrain_*` playlists can exist in the host library without being returned as exact owner matches. The old owner-only filter could therefore hide real BeatBrain playlists even though they were visible in Spotify.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-backend`; `npm run build` in `beatbrain-backend`; `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 18:05
+- Change: Fixed the active BeatBrain choose-path for Spotify library playlists whose summary payload incorrectly reports `tracks.total = 0`. `/choose` now keeps raw library playlists even without a reliable summary count, resolves the real track total only for matching `BeatBrain_*` playlists through the lightweight items-total fallback (`/playlists/:id/items?limit=1&fields=total`), caches that fallback total briefly, and keeps rendering the host carousel with BeatBrain-specific empty/loading copy.
+- Files: `beatbrain-backend/src/spotify/spotify.service.ts`, `beatbrain-backend/src/choose/choose.service.ts`, `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Live backend diagnostics showed the real host playlists (`BeatBrain_Deutsch`, `BeatBrain_PopRock`, etc.) are present in `/me/playlists`, but Spotify reports `tracks.total = 0` for them while the items endpoint still returns songs. The old summary-total filter therefore hid valid BeatBrain playlists completely.
+- Test: `GET http://127.0.0.1:3000/dev/spotify/mePlaylists`; `POST http://127.0.0.1:3000/dev/spotify/playlistTest` with `playlistId=2lnL6PG7eCi66n1knVuvGM`; `npm exec tsc -- --noEmit` in `beatbrain-backend`; `npm run build` in `beatbrain-backend`; `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 18:18
+- Change: Compacted the active host choose carousel cards so the playlist teasers consume less vertical space. The runtime chooser now uses slightly smaller card widths, a flatter cover aspect ratio, tighter vertical padding, and denser teaser typography while preserving the same horizontal carousel interaction.
+- Files: `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: After BeatBrain playlists were visible again, the teaser cards still made the choose screen taller than necessary and forced avoidable up/down scrolling on host web.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 18:23
+- Change: Reduced the host choose teaser size a second step. The live carousel now uses even narrower cards, a noticeably flatter cover ratio, tighter vertical spacing, and slightly smaller teaser title sizing while keeping selection, snapping, arrows, and dots unchanged.
+- Files: `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The first compacting pass still left the chooser taller than desired; the host screen needed less teaser height, not a different interaction model.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 18:29
+- Change: Tightened the vertical spacing of the host choose carousel stage itself. The live screen now uses a smaller overall section gap, a denser top summary panel gap, zeroed compact carousel vertical padding, and a much closer dot-indicator row directly under the cards so the current-position indicator stays visible without scrolling.
+- Files: `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Even after shrinking the teaser cards, the carousel position indicator still sat too far below the cards and could fall below the fold on normal host-web laptop heights.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 19:02
+- Change: Reworked the active host choose screen structure. The runtime chooser no longer renders the dot/status indicator, no longer keeps the old top `Playlist wählen` summary card, and now shows a dedicated CTA panel directly under the carousel with a much larger selected playlist name plus a `Quiz starten` button.
+- Files: `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The host choose screen should foreground the chosen playlist immediately, keep the CTA directly below the carousel, and avoid wasting vertical space on a separate status indicator row and redundant summary card.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 19:02
+- Change: Fixed the first host quiz-start route race and tightened browser-player startup gating. The host controller now keeps the user on the current choose/create screen until `round:question` actually arrives instead of navigating to `quiz` too early, and the browser playback prime result is now checked before starting the first round. Browser-SDK priming/playback also retries once with a fresh player after auth/initialization failures before surfacing a host-facing setup error.
+- Files: `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: Starting a host quiz could briefly bounce back through setup because the route moved to `quiz` while the lobby was still in `lobby` state, and browser SDK auth/init failures could still open a round and only show the Spotify problem inside the live quiz screen afterward.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 19:21
+- Change: Added a real host Spotify readiness status path and wired it into the host start screen. Backend now exposes `GET /auth/spotify/status`, which distinguishes between `connected`, `needsReconnect`, `missingPremium`, and `missingPlaybackScope` for browser playback. The host controller loads that status after auth, uses it to turn a failed choose/start prime into a more accurate setup message, and the login screen now reflects playback readiness instead of treating any stored app JWT as “Spotify verbunden”.
+- Files: `beatbrain-backend/src/auth/auth.service.ts`, `beatbrain-backend/src/auth/auth.controller.ts`, `beatbrain-frontend/src/shared/net/beatbrainApi.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-frontend/src/host/screens/HostLoginScreen.tsx`, `beatbrain-frontend/src/host/HostApp.tsx`, `beatbrain-frontend/src/host/HostPreviewApp.tsx`, `beatbrain-frontend/src/host/services/hostPlaybackErrorMessage.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The app could still load BeatBrain playlists with a valid host JWT / Spotify library token path, while host-browser playback was already unavailable. That made the UI contradictory: choose/start said “reconnect Spotify” while the host start screen still claimed “Spotify verbunden”.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`; `npm exec tsc -- --noEmit` in `beatbrain-backend`; `npm run build` in `beatbrain-backend`
+
+## 2026-04-06 19:31
+- Change: Rebalanced the host choose visual hierarchy. The active carousel cards were scaled back up again, while the CTA panel underneath was made narrower and more compact with smaller title/button sizing so the cover art clearly remains the primary focal point.
+- Files: `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: After moving the CTA panel below the carousel, its size was too close to the cover cards and visually competed with the carousel instead of supporting it.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`
+
+## 2026-04-06 19:31
+- Change: Fixed the host-web playback false-positive around “Spotify ist für Browser-Playback bereit.” The backend now stores granted Spotify scopes on the host session, refreshes once to backfill missing scope metadata for older dev sessions, explicitly requires the Web Playback `streaming` scope before returning `/auth/spotify/token`, and no longer treats `/me/player/devices` success alone as proof that the Web Playback SDK can authenticate. On the frontend, host choose/start now keeps the real prime error unless the refreshed Spotify status is actually blocking, and the host-web prime transfers playback to the browser SDK device during the CTA flow after an early `activateElement()` attempt on an existing player.
+- Files: `beatbrain-backend/src/auth/auth.service.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The host could load BeatBrain playlists and still get stuck in a misleading start loop because the status endpoint only proved general playback-state access, while the Web Playback SDK itself still needed a confirmed `streaming`-enabled Spotify user token for `getOAuthToken`. That mismatch let the UI say “ready” even though the browser player could not actually connect/start.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`; `npm exec tsc -- --noEmit` in `beatbrain-backend`; `npm run build` in `beatbrain-backend`
+
+## 2026-04-06 20:39
+- Change: Hardened the host-web Spotify browser-playback path end-to-end. The frontend Web Playback SDK service no longer captures a stale host `ApiClientContext`/JWT in the player’s `getOAuthToken` closure, keeps a single live context source for the SDK token path, warms the player only in the background, and reserves the real browser-playback prime for the actual `Quiz starten` click. It now logs the requested `[host-playback]` lifecycle markers (`sdk:load:*`, `token:*`, `player:*`, `transfer:*`, `play:*`, `ui:state:*`), narrows host-web fallback usage so auth/device/autoplay/race failures are no longer hidden by backend playback, and keeps the start-screen status tri-state (`ready` / `blocked` / `unknown`) instead of treating legacy sessions with unknown scopes as automatically blocked.
+- Files: `beatbrain-backend/src/auth/auth.service.ts`, `beatbrain-frontend/src/shared/net/beatbrainApi.ts`, `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts`, `beatbrain-frontend/src/host/services/hostPlaybackErrorMessage.ts`, `beatbrain-frontend/src/host/hooks/useHostController.ts`, `beatbrain-frontend/src/host/screens/HostLoginScreen.tsx`, `beatbrain-frontend/src/host/HostPreviewApp.tsx`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The real host-web failure was deeper than “Spotify reconnect needed”: the SDK player could keep using an old token/JWT path through a captured context closure, while the backend status path also treated missing legacy scope metadata too aggressively. That combination created false blocked states, misleading ready states, and repeated Web SDK auth/device failures even though the host was already logged in and could load playlists.
+- Test: `npm exec tsc -- --noEmit` in `beatbrain-frontend`; `npm exec tsc -- --noEmit` in `beatbrain-backend`; `npm run build` in `beatbrain-backend`
+
+## 2026-04-06 20:47
+- Change: Narrowed the host-web auth error copy so a later Spotify Web Playback SDK `authentication_error` is no longer shown as the more specific “kein gültiges Spotify-Browser-Playback-Token” case unless the token path itself is actually missing. Backend token/status verification was also rechecked locally against the running dev server.
+- Files: `beatbrain-frontend/src/host/services/hostPlaybackErrorMessage.ts`, `beatbrain-backend/PROJECT_CONTEXT.md`, `beatbrain-backend/project-log.md`
+- Reason: The live backend currently reports host-web playback as ready and returns a valid SDK token, so the old UI copy was too strong and misleading for the remaining browser-SDK-side auth rejection case.
+- Test: `GET http://127.0.0.1:3000/auth/spotify/status`; `GET http://127.0.0.1:3000/auth/spotify/token`; `npm exec tsc -- --noEmit` in `beatbrain-frontend`

@@ -574,11 +574,11 @@
 # 33) Update 2026-04-03 (BeatBrain_-Spotify-Playlists als aktuelle Choose-Quelle)
 - Aktuelle Source-of-Truth fuer Choose/Quiz:
   - `GET /choose` liest wieder direkt die Spotify-Playlists des aktuellen Host-Accounts.
-  - Beruecksichtigt werden nur Playlists, die dem aktuellen Host gehoeren und deren Name mit `BeatBrain_` beginnt.
+  - Beruecksichtigt werden alle Playlists aus der Spotify-Bibliothek des aktuellen Hosts, deren Name mit `BeatBrain_` beginnt.
   - Das Suffix nach `BeatBrain_` bestimmt die BeatBrain-Kategorie, z. B. `BeatBrain_60s`, `BeatBrain_rock`, `BeatBrain_deutsch`.
 - Wichtige Spotify-Einschraenkung:
   - Spotify stellt ueber die Web API keine belastbare Folder-/Verzeichnis-Struktur aus dem Desktop-Client bereit.
-  - Die BeatBrain-Logik kann deshalb nicht auf den Spotify-Ordner `BeatBrain` filtern, sondern ausschliesslich auf den Playlist-Namenspraefix `BeatBrain_`.
+  - Die BeatBrain-Logik kann deshalb nicht auf den Spotify-Ordner `BeatBrain` filtern, sondern ausschliesslich auf den Playlist-Namenspraefix `BeatBrain_` innerhalb der Bibliotheks-Playlists des Hosts.
 - Mapping-Regeln:
   - Jahrzehnte (`60s`, `70s`, `80s`, `90s`, `00s`, `10s`, `20s`) werden als `categoryType=decade` ausgeliefert und bekommen `decadeTag=<suffix>`.
   - Andere `BeatBrain_`-Suffixe werden als `categoryType=genre` behandelt.
@@ -593,6 +593,7 @@
 - Frontend-Integration:
   - Host/Mobile uebernehmen weiterhin optionale Felder wie `tags`, `decadeTag`, `categoryType` und `trackCount` aus `/choose`.
   - Wenn Spotify fuer eine BeatBrain-Playlist einen plausiblen `tracks.total` liefert und dieser fuer die gewaehlte Fragenanzahl zu klein ist, blockiert das Frontend den Start defensiv statt erst beim Session-Create zu scheitern.
+  - Falls Spotify im Bibliotheks-/Playlist-Summary-Endpoint fuer `BeatBrain_*` faelschlich `tracks.total = 0` liefert, loest der Backend-Choose-Pfad die echte Trackzahl gezielt ueber den Items-Endpoint (`/playlists/:id/items?limit=1&fields=total`) nur fuer die passenden BeatBrain-Playlists nach und cached das Ergebnis kurzzeitig.
 
 # 34) Update 2026-04-04 (Keine "vor oder nach 2000"-Fragen fuer Jahrzehnt-Playlists)
 - Quiz-Fragelogik:
@@ -687,7 +688,7 @@
 - Layout-/UI-Verhalten:
   - `HostPage` nutzt den verbleibenden Bereich unter Header/Notice, `100dvh` auf Web und vertikales Scrollen statt Clipping oder Zoom-Workarounds.
   - Login, Lobby, Setup, Choose, Create, Quiz und Results wurden auf dieselben Host-Primitives umgestellt.
-  - Die Host-Playlist-Auswahl ist kein horizontales Carousel mehr; `HostChoosePlaylistScreen` nutzt jetzt ein responsives Kartenraster.
+  - Die Host-Playlist-Auswahl nutzt wieder ein horizontales Carousel / eine Galerie; `HostChoosePlaylistScreen` rendert eine fokussierte Mittelkarte mit seitlichen Peeks, Snap-Verhalten, Kartenklick, Pfeilnavigation und Punktnavigation.
   - Quiz-Reveal-Antworten nutzen jetzt ein umbruchfaehiges Grid; das fruehere `nowrap`-Dense-Layout wurde entfernt.
   - CTA-Reihen stacken oder umbrechen ueber `HostActionBar`; Spieler- und Ergebnisbereiche reagieren ueber containerbasierte Breitenmessung in `HostResponsiveGrid`.
   - Fehlende Avatar-Bilder brechen die UI nicht mehr; `HostPlayerAvatar` rendert Fallback-Initialen.
@@ -820,3 +821,188 @@
 - QA/preview update:
   - `beatbrain-frontend/src/host/HostPreviewApp.tsx` now renders the lobby preview with 10 players to validate the full-capacity host stage.
   - Verified lobby stage at `1280x800`, `1366x768`, `1440x900`, `1536x864`, and `1920x1080`: no horizontal overflow and no internal vertical scroll region, even with the 10-player preview.
+
+# 42) Update 2026-04-06 (Host-Web Playback stabilisiert, Choose wieder als Carousel, sichtbare Texte bereinigt)
+- Host-Web Spotify Playback:
+  - `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts` initialisiert die Spotify Web Playback SDK jetzt robust als Primaerpfad:
+    - SDK-Script wird genau einmal geladen
+    - Spotify-SDK-Token wird ueber `GET /auth/spotify/token` vorab geholt und bei Bedarf neu geladen
+    - `connect()` und `ready` werden explizit abgewartet
+    - die Browser-`device_id` wird gespeichert und fuer den eigentlichen Playback-Start verwendet
+  - Der Host-Browser transferiert Playback jetzt vor dem `play` gezielt auf sein eigenes Web-SDK-Device, statt implizit auf ein beliebiges aktives Spotify-Geraet zu hoffen.
+  - Vor dem eigentlichen `play` wird das Browser-Device ueber `/spotify/player/devices` auf Sichtbarkeit/Aktivierung geprueft; dadurch werden Race Conditions zwischen Lobby-Start, Browser-Player-Init und Track-Start reduziert.
+  - Browser-Console-Logs dokumentieren jetzt gezielt:
+    - SDK geladen
+    - Player erstellt
+    - Connect gestartet / erfolgreich
+    - Auth-/Account-/Autoplay-/Playback-Fehler
+    - empfangene `device_id`
+    - Transfer gestartet / erfolgreich
+    - Play gestartet / erfolgreich
+  - `beatbrain-frontend/src/host/services/hostPlaybackErrorMessage.ts` normalisiert Host-Playback-Fehler in handlungsleitende UI-Meldungen; rohe Ketten wie `Player command failed: ... (Browser playback failed first: ...)` werden nicht mehr direkt angezeigt.
+- Host-Web Controller / Startreihenfolge:
+  - `beatbrain-frontend/src/host/hooks/useHostController.ts` wartet den Host-Web-Prime jetzt vor dem aktiven `host:startRound`-Emit im `host_web_sdk`-Modus ab.
+  - Auch der Playlist-Startpfad primt den Browser-Player bereits aus dem echten CTA-Klick heraus, damit `activateElement()` und Web-SDK-Verbindung vor der ersten Frage bereit sind.
+  - Der erste Host-Quizstart navigiert nicht mehr vorschnell auf die Quiz-Route, solange die Lobby noch im `lobby`-Status ist. Die Choose/Create-Screens bleiben waehrend Session-Erstellung und `host:startRound` sichtbar; erst `round:question` schaltet die Route auf `quiz`. Damit entfaellt der kurze Ruecksprung/Flicker ueber das Setup.
+  - Wenn der Browser-Player im Host-Web-Modus vor dem Start nicht sauber vorbereitet werden kann, wird die erste Runde jetzt gar nicht erst gestartet; der Fehler bleibt stattdessen als Setup-Meldung auf dem Host-Screen sichtbar.
+  - `round:playbackError`, Socket-Exceptions und Setup-Fehler werden fuer die Host-UI ueber den neuen Fehler-Mapping-Pfad bereinigt.
+- Backend Playback / Choose:
+  - Neuer Backend-Endpunkt: `PUT /spotify/player/transfer`.
+  - `beatbrain-backend/src/spotify/spotify.service.ts` unterstuetzt jetzt explizite Playback-Transfers auf eine uebergebene `deviceId` und cached dieses Device weiter pro Host.
+  - `getCurrentUserPlaylistsMeta(...)` fuehrt keinen zusaetzlichen `/playlists/:id/items?limit=5...`-Probe mehr aus, wenn Spotify bereits `tracks.total <= 0` meldet. Damit loest das Laden von `/choose` keinen vermeidbaren Spotify-`429`-Cooldown ueber viele Playlists mehr aus.
+- Host Choose Screen:
+  - Die aktive Runtime-Implementierung unter `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx` rendert wieder als horizontaler Carousel-/Galerie-Chooser statt als Grid/Liste.
+  - Die aktive Karte ist klar hervorgehoben, Nachbar-Karten bleiben seitlich sichtbar, Scrollen snappt auf Kartenbreite, und Pfeil-/Punktnavigation steuern denselben Runtime-Screen.
+  - Die sichtbaren Playlist-Teaser wurden fuer Host-Web noch kompakter skaliert (deutlich kleinere Kartenbreite, flacheres Cover-Seitenverhaeltnis, weniger Innenabstand), damit der Chooser auf typischen Laptop-/Desktop-Hoehen seltener vertikal scrollen muss.
+  - Die Dot-/Positionsanzeige wurde aus der aktiven Host-Choose-Ansicht wieder entfernt.
+  - Die primäre CTA-Kachel sitzt jetzt direkt unter dem Carousel, zeigt den gewaehlten Playlist-Namen gross und auffaellig, und verwendet fuer den Startbutton die Beschriftung `Quiz starten`.
+- Sichtbare Frontend-Texte:
+  - Aktive Host- und Mobile-Texte nutzen wieder echte Umlaute statt `ae` / `oe` / `ue`, soweit es sichtbare deutsche Displaytexte betrifft.
+  - Der Reveal-/Weiter-CTA lautet in den aktiven Quiz-Flows jetzt einheitlich `Nächste Frage`.
+
+# 43) Update 2026-04-06 (BeatBrain-Choose erkennt Playlists trotz Spotify-`tracks.total = 0`)
+- Spotify-Choose-Sonderfall:
+  - Der laufende Spotify-Web-API-Pfad liefert fuer manche selbst erstellten `BeatBrain_*`-Playlists im Bibliothekslisting (`/me/playlists`) und sogar im Playlist-Summary-Endpunkt (`/playlists/:id?fields=tracks.total`) `tracks.total = 0`, obwohl der Items-Endpunkt weiterhin echte Songs ausgibt.
+  - Dadurch durften diese Playlists im aktiven Backend-Choose-Pfad nicht mehr ueber `reported tracks.total > 0` herausgefiltert werden.
+- Backend-Fix:
+  - `beatbrain-backend/src/spotify/spotify.service.ts#getCurrentUserPlaylistsMeta()` behaelt Bibliotheks-Playlists jetzt auch dann im Rohbestand, wenn Spotify dort keinen verlaesslichen Track-Count meldet.
+  - `beatbrain-backend/src/spotify/spotify.service.ts#getPlaylistTrackTotal()` verwendet als Fallback den Items-Endpunkt (`/playlists/:id/items?limit=1&fields=total`) und cached den so ermittelten Wert kurzzeitig.
+  - `beatbrain-backend/src/choose/choose.service.ts` loest diesen Fallback nur fuer wirklich passende `BeatBrain_*`-Playlists aus und bricht weitere Nachauflosungen bei `429` defensiv ab, statt das gesamte `/choose` zu verlieren.
+- Wirkung:
+  - BeatBrain-Playlists aus der Spotify-Bibliothek bleiben wieder sichtbar, auch wenn Spotify im Summary `0` meldet.
+  - Die Host-/Mobile-Choose-UI erhaelt nach erfolgreicher Fallback-Aufloesung wieder sinnvolle `trackCount`-Metadaten fuer Disable-Hinweise wie "mindestens X Tracks benoetigt".
+
+# 44) Update 2026-04-06 (Host-Choose ohne Dot-Status, CTA unter Carousel, erster Quizstart ohne Setup-Flicker)
+- Host-Choose-UI:
+  - `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx` nutzt keine Dot-/Positionsanzeige mehr.
+  - Die obere `Playlist waehlen`-Zusammenfassung wurde aus der aktiven Runtime entfernt.
+  - Stattdessen sitzt unter dem Carousel eine eigene CTA-Kachel mit grossem Playlist-Namen, optionalen Tags/Track-Anzahl und dem Button `Quiz starten`.
+  - Die visuelle Hierarchie wurde danach noch einmal justiert: Das Carousel selbst bekam wieder mehr Flaeche/Gewicht, waehrend die CTA-Kachel darunter kompakter skaliert wurde, damit die Cover klar im Vordergrund stehen.
+- Host-Startverhalten:
+  - `beatbrain-frontend/src/host/hooks/useHostController.ts` schiebt die Route beim ersten Quizstart nicht mehr sofort auf `quiz`, solange die Lobby noch nicht tatsaechlich in eine Frage gewechselt ist.
+  - Der sichtbare Routenwechsel passiert erst bei `round:question`; dadurch verschwindet der kurze Sprung zur Setup-Ansicht vor der ersten Frage.
+- Browser-Playback-Priming:
+  - `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts` versucht Browser-SDK-Priming und Browser-SDK-Playback bei Auth-/Initialisierungsfehlern jetzt einmal mit frischem Player erneut.
+  - Scheitert das Priming schon beim Start-CTA, blockiert der Host-Controller den Rundenstart mit einer sauberen Setup-Meldung, statt die Runde ohne vorbereiteten Browser-Player zu oeffnen.
+
+# 45) Update 2026-04-06 (Spotify-Status trennt JWT-Login von echter Host-Web-Playback-Bereitschaft)
+- Neue Status-Trennung:
+  - Die Host-Web-UI unterscheidet jetzt zwischen `Host-JWT vorhanden` und `Spotify-Browser-Playback wirklich bereit`.
+  - Ursache: `/choose` kann mit einer Spotify-Anmeldung noch funktionieren, obwohl Browser-Playback bereits an fehlender Streaming-Berechtigung, fehlendem Premium oder einer abgelaufenen Host-Session scheitert.
+- Backend:
+  - Neuer Endpunkt `GET /auth/spotify/status`.
+  - `beatbrain-backend/src/auth/auth.service.ts#getHostSpotifyStatus(...)` prueft:
+    - existiert eine gueltige Host-Spotify-Session?
+    - laesst sich ein frischer Spotify-Access-Token holen?
+    - meldet `/me` einen Premium-Account oder nicht?
+    - beantwortet Spotify `/me/player/devices` erfolgreich oder nur mit `403`/`401`?
+  - Daraus liefert der Backend-Status jetzt explizit Felder wie `connected`, `canUseWebPlayback`, `needsReconnect`, `missingPremium`, `missingPlaybackScope` und eine konkrete `message`.
+- Frontend Host-Login:
+  - `beatbrain-frontend/src/host/hooks/useHostController.ts` laedt diesen Status nach Host-Auth mit und verwendet ihn sowohl fuer Setup-Fehlermeldungen als auch fuer die Startansicht.
+  - `beatbrain-frontend/src/host/screens/HostLoginScreen.tsx` zeigt daher nicht mehr pauschal `Spotify verbunden`, nur weil ein App-JWT vorhanden ist.
+  - Wenn Playlists zwar noch geladen werden koennen, Browser-Playback aber nicht bereit ist, zeigt der Startscreen jetzt gezielt `Spotify neu verbinden` bzw. den konkreten Browser-Playback-Hinweis.
+  - Der `Mit Spotify verbinden`-Button bleibt in diesem Zustand bewusst erneut verfuegbar, damit der Host die Anmeldung mit frischen Playback-Berechtigungen erneuern kann.
+- Fehlertexte:
+  - Host-Playback-Authfehler sprechen nicht mehr nur von `abgelaufen`, sondern allgemeiner davon, dass die aktuelle Spotify-Verbindung kein Host-Browser-Playback erlaubt.
+
+# 46) Update 2026-04-06 (Host-Web-Playback prueft jetzt echte SDK-Scopes statt nur Spotify-Status)
+- Root Cause:
+  - Der Host konnte Playlists weiterhin laden, obwohl die Spotify-Anmeldung fuer die Web Playback SDK nicht zwingend bereit war.
+  - Ursache war ein False Positive im Backend-Status: `GET /auth/spotify/status` pruefte bisher im Wesentlichen `/me/player/devices` und Premium, aber nicht, ob die aktuelle Spotify-Anmeldung den fuer `getOAuthToken` benoetigten Web-Playback-Scope wirklich besitzt.
+  - Dadurch konnte der Startscreen bzw. der Choose-Screen `Spotify ist fuer Browser-Playback bereit.` melden, waehrend die Browser-SDK-Verbindung beim echten Prime/Connect weiter scheiterte.
+- Backend:
+  - `beatbrain-backend/src/auth/auth.service.ts` speichert jetzt die von Spotify wirklich gewaehrten Scopes in der Host-Session (`grantedScopes`) und persistiert sie auch in `.dev-host-session.json`.
+  - Beim Refresh eines Spotify-Tokens werden die Scopes erhalten bzw. aus der Refresh-Antwort aktualisiert, falls Spotify sie erneut mitsendet.
+  - Fuer Host-Web-Playback wird der fuer die Spotify Web Playback SDK entscheidende Scope `streaming` jetzt explizit verifiziert.
+  - Wenn eine bestehende Dev-Session noch keine gespeicherten Scopes hat, versucht der Backend-Status einmal einen Refresh, um die Scope-Information nachzuladen; bleibt `streaming` danach unbestaetigt, gilt Browser-Playback bewusst als nicht bereit.
+  - `GET /auth/spotify/token` gibt kein SDK-Token mehr aus, wenn der Host-Login zwar Playlists lesen darf, aber noch keinen bestaetigten Browser-Playback-Scope hat. Dadurch scheitert der Host nicht mehr mit einer irrefuehrenden spaeten SDK-`authentication_error`, sondern direkt mit einer klaren Reconnect-/Scope-Meldung.
+- Frontend / Host-Web-Priming:
+  - `beatbrain-frontend/src/host/hooks/useHostController.ts` ueberschreibt einen echten Prime-Fehler nicht mehr blind mit der allgemeinen Spotify-Statusmeldung. Nur wirklich blockierende Statusfaelle (`missingPremium`, `missingPlaybackScope`, `needsReconnect`) ersetzen noch den Prime-Fehlertext.
+  - `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts` ruft `activateElement()` jetzt auch direkt auf einer bereits vorhandenen Player-Instanz an, bevor weitere asynchrone Schritte laufen. Das orientiert sich an der Spotify-Doku fuer Browser mit Autoplay-Restriktionen.
+  - Das Host-Priming verbindet den Browser-Player jetzt nicht nur, sondern transferiert Playback bereits im Start-CTA gezielt auf die Browser-`device_id`. Erst wenn Connect, `ready` und Transfer erfolgreich sind, darf der Quizstart weiterlaufen.
+- Wirkung:
+  - Der Button-Loop `Quiz starten -> kurz laden -> "Spotify ist fuer Browser-Playback bereit."` wird aufgeloest.
+  - Wenn der Host-Login wirklich kein `streaming` mehr hat, zeigt die UI jetzt konsistent einen Reconnect-Hinweis.
+  - Wenn der Host-Login alle noetigen Rechte hat, ist der Browser-Player bereits vor der ersten Frage verbunden und als Zielgeraet vorbereitet.
+
+# 47) Update 2026-04-06 (Host-Web-Playback End-to-End gehaertet: keine stale SDK-Context-Closure mehr, Scope-Status tri-state, Prime nur aus echtem Klick)
+- Konkrete Root Causes:
+  - `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts` hielt die beim ersten Player-Bau uebergebene `ApiClientContext`-Closure dauerhaft in `getOAuthToken`. Nach spaeterem Host-Reauth / JWT-Update konnte die Spotify Web Playback SDK dadurch weiter ueber einen alten Host-JWT-/Token-Pfad laufen und auf `authentication_error` enden, obwohl der aktuelle Host im UI schon wieder als verbunden erschien.
+  - Legacy-Dev-Sessions ohne persistierte `grantedScopes` wurden in der alten Statuslogik praktisch wie `Scope fehlt` behandelt. Dadurch konnte `/auth/spotify/status` Browser-Playback blockieren, obwohl serverseitig nur `unbekannt` war, ob die noetigen Web-Playback-Scopes bestaetigt sind.
+  - Der Host-Controller startete im Hintergrund weiterhin ein echtes Prime, obwohl `activateElement()` fuer Browser/Autoplay robust aus dem realen User-Click kommen muss.
+- Backend Auth / Status:
+  - `beatbrain-backend/src/auth/auth.service.ts` behandelt Host-Web-Playback-Scopes jetzt als tri-state:
+    - `granted`
+    - `missing`
+    - `unknown`
+  - Fuer Host-Web-Playback werden serverseitig jetzt explizit diese Scopes als erforderlich betrachtet:
+    - `streaming`
+    - `user-modify-playback-state`
+    - `user-read-playback-state`
+  - `evaluateHostSpotifyPlayback(...)` bleibt die Single Source of Truth fuer beide Pfade:
+    - `GET /auth/spotify/status`
+    - `GET /auth/spotify/token`
+  - Wichtig:
+    - `blocked` wird nur bei wirklich belegtem Problem geliefert (fehlende Scopes, fehlendes Premium, ungueltige/nicht mehr nutzbare Spotify-Session).
+    - `unknown` blockiert Browser-Playback nicht mehr vorab, sondern erlaubt den echten SDK-Prime mit aktueller Fehlersicht.
+- Frontend Host-Web Playback Service:
+  - `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts` fuehrt jetzt eine modulweite, aktualisierbare aktive `ApiClientContext`-Quelle, statt den Context dauerhaft in der Player-Closure einzufrieren.
+  - Dadurch nutzt `getOAuthToken` immer den aktuellen Host-JWT-/Session-Pfad.
+  - Der Service ist jetzt klar in drei Phasen getrennt:
+    - Warm-up im Hintergrund:
+      - SDK laden
+      - Tokenpfad pruefen
+      - Player einmalig erstellen
+      - `connect()` / `ready` vorbereiten
+    - Prime aus echtem CTA-Klick:
+      - vorhandenes `activateElement()` sofort auf bestehender Player-Instanz
+      - falls noetig Player erstellen
+      - `connect()`
+      - `ready`
+      - Browser-`device_id` speichern
+      - Transfer auf genau diese `device_id`
+    - Playback pro Frage:
+      - gezieltes `play` mit `device_id`
+      - kurzer Device-Active-Retry nur fuer echte Aktivierungsverzoegerung
+  - Browser-Fallback auf den generischen Server-Play-Call passiert in Host-Web jetzt nicht mehr fuer Auth-/Scope-/Autoplay-/Device-Race-Probleme. Diese Fehler bleiben sichtbar, statt vom Fallback versteckt zu werden. Ein Fallback bleibt nur fuer echte SDK-/Netz-Ausfaelle als letzter Ausweg erhalten.
+- Frontend Host-Controller / UI:
+  - `beatbrain-frontend/src/host/hooks/useHostController.ts` nutzt nach Host-Auth und bei Lobby-/Restart-Wegen nur noch Warm-up im Hintergrund.
+  - Das echte Prime fuer Browser-Playback passiert nur noch vor dem Start aus dem aktiven `Quiz starten`-Klick.
+  - Prime-Fehler werden nicht mehr pauschal durch eine allgemeine Statusmeldung ueberschrieben; nur `webPlaybackStatus = blocked` ersetzt den Prime-Fehlertext noch bewusst.
+  - `HostLoginScreen` unterscheidet jetzt sauber:
+    - `blocked`
+    - `unknown`
+    - `ready`
+  - `unknown` bedeutet:
+    - Spotify ist verbunden
+    - Browser-Playback wird erst beim Start im Browser final verifiziert
+    - der Host darf starten
+- Sichtbare Debugbarkeit:
+  - Browser-Console-Logs verwenden jetzt konsistent das Prefix `[host-playback]` und benennen die sensiblen Phasen explizit:
+    - `sdk:load:start`
+    - `sdk:load:ready`
+    - `token:getOAuthToken called`
+    - `token:fetch:start`
+    - `token:fetch:ok`
+    - `token:fetch:fail`
+    - `player:create`
+    - `player:connect:start`
+    - `player:connect:success`
+    - `player:event:ready`
+    - `player:event:not_ready`
+    - `player:error:authentication_error`
+    - `player:error:initialization_error`
+    - `player:error:account_error`
+    - `player:error:playback_error`
+    - `player:event:autoplay_failed`
+    - `transfer:start`
+    - `transfer:requested`
+    - `transfer:confirmed`
+    - `play:start`
+    - `play:requested`
+    - `ui:state:*`
+- Wirkung:
+  - Der Host-Start faellt nicht mehr in den Widerspruch `Spotify verbunden / bereit`, waehrend die SDK intern noch mit einem alten oder falsch eingehaengten Tokenpfad arbeitet.
+  - Bestehende gueltige Sessions ohne frueher persistierte Scope-Metadaten muessen nicht mehr blind reauthen; sie laufen als `unknown` in den echten Prime statt in einen False-Blocked-Zustand.
+  - Reauth wird nur noch dann verlangt, wenn der Backend-Status dafuer wirklich einen belegten technischen Grund hat.
+  - Wenn der Backend-Tokenspfad lokal valide ist, mappt die Host-UI einen spaeteren Web-SDK-`authentication_error` nicht mehr faelschlich als „kein gueltiges Browser-Playback-Token“, sondern als Browser-SDK-Anmeldeablehnung. Damit unterscheidet die UI sauberer zwischen echtem Token-/Session-Problem und einer vom Browser/SDK abgelehnten Host-Web-Initialisierung.

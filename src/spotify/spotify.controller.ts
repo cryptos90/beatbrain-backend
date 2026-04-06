@@ -54,6 +54,19 @@ export class SpotifyController {
     });
   }
 
+  @Put('player/transfer')
+  async transferPlayback(
+    @Headers('authorization') authorizationHeader: string | undefined,
+    @Body() body: { deviceId?: string; play?: boolean },
+  ) {
+    const jwt = this.authService.verifyHostJwtOrThrow(authorizationHeader);
+    return this.spotifyService.transferPlayback({
+      deviceId: body.deviceId ?? '',
+      play: body.play,
+      hostUserId: jwt.sub,
+    });
+  }
+
   @Get('player/devices')
   async getPlayerDevices(
     @Headers('authorization') authorizationHeader: string | undefined,

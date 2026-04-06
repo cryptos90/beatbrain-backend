@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
 import {
   SpotifyPlaylistMeta,
   SpotifyService,
@@ -68,6 +68,14 @@ function normalizeBeatBrainSortKey(name: string) {
     .replace(/[\s_-]+/g, '');
 }
 
+function hasPositiveTrackCount(trackCount: number | undefined) {
+  return (
+    typeof trackCount === 'number' &&
+    Number.isFinite(trackCount) &&
+    Math.floor(trackCount) > 0
+  );
+}
+
 function buildChoosePlaylistFromBeatBrainMeta(
   playlist: SpotifyPlaylistMeta,
 ): ChoosePlaylist | null {
@@ -107,26 +115,61 @@ export class ChooseService {
 
   async getUserPlaylists(userId: string): Promise<ChoosePlaylist[]> {
     const cacheKey = String(userId ?? '').trim() || 'global';
-    const rawPlaylists = await this.spotifyService.getCurrentUserPlaylistsMeta(userId);
-    const playlists = rawPlaylists
-      .map((playlist) => {
-        const suffix = normalizeBeatBrainPlaylistSuffix(playlist.name);
-        const choosePlaylist = buildChoosePlaylistFromBeatBrainMeta(playlist);
-        if (!suffix || !choosePlaylist?.id) {
-          return null;
-        }
+    const rawPlaylists = await this.spotifyService.getCurrentUserPlaylistsMeta();
+    const matchedPlaylists: Array<{
+      choosePlaylist: ChoosePlaylist;
+      sortKey: string;
+    }> = [];
+    let trackCountFallbackLookups = 0;
+    let skipFurtherTrackCountFallbacks = false;
 
-        return {
-          choosePlaylist,
-          sortKey: normalizeBeatBrainSortKey(suffix),
-        };
-      })
-      .filter(
-        (
-          playlist,
-        ): playlist is { choosePlaylist: ChoosePlaylist; sortKey: string } =>
-          Boolean(playlist?.choosePlaylist?.id),
-      )
+    for (const rawPlaylist of rawPlaylists) {
+      const suffix = normalizeBeatBrainPlaylistSuffix(rawPlaylist.name);
+      if (!suffix) {
+        continue;
+      }
+
+      let playlist = rawPlaylist;
+      if (!hasPositiveTrackCount(rawPlaylist.trackCount) && !skipFurtherTrackCountFallbacks) {
+        try {
+          const resolvedTrackCount = await this.spotifyService.getPlaylistTrackTotal(
+            rawPlaylist.id,
+          );
+          playlist = {
+            ...rawPlaylist,
+            trackCount: resolvedTrackCount,
+          };
+          trackCountFallbackLookups += 1;
+        } catch (error) {
+          if (error instanceof HttpException && error.getStatus() === 429) {
+            skipFurtherTrackCountFallbacks = true;
+            this.logger.warn(
+              '[choose] Spotify rate limit while resolving BeatBrain track counts; continuing without fallback totals.',
+            );
+          } else {
+            const detail =
+              error instanceof Error && error.message.trim()
+                ? ` detail=${error.message.trim()}`
+                : '';
+            this.logger.warn(
+              `[choose] could not resolve track count for BeatBrain playlist id=${rawPlaylist.id} name=${rawPlaylist.name}${detail}`,
+            );
+          }
+        }
+      }
+
+      const choosePlaylist = buildChoosePlaylistFromBeatBrainMeta(playlist);
+      if (!choosePlaylist?.id) {
+        continue;
+      }
+
+      matchedPlaylists.push({
+        choosePlaylist,
+        sortKey: normalizeBeatBrainSortKey(suffix),
+      });
+    }
+
+    const playlists = matchedPlaylists
       .sort((left, right) => {
         const leftIndex = BEATBRAIN_PLAYLIST_ORDER.indexOf(left.sortKey);
         const rightIndex = BEATBRAIN_PLAYLIST_ORDER.indexOf(right.sortKey);
@@ -144,7 +187,7 @@ export class ChooseService {
       })
       .map((playlist) => playlist.choosePlaylist);
     this.logger.log(
-      `[choose] loaded beatbrain spotify playlists user=${cacheKey} total=${rawPlaylists.length} matched=${playlists.length}`,
+      `[choose] loaded beatbrain spotify playlists user=${cacheKey} total=${rawPlaylists.length} matched=${playlists.length} trackCountFallbacks=${trackCountFallbackLookups}`,
     );
 
     return playlists.map((playlist) => ({ ...playlist }));
