@@ -1006,3 +1006,137 @@
   - Bestehende gueltige Sessions ohne frueher persistierte Scope-Metadaten muessen nicht mehr blind reauthen; sie laufen als `unknown` in den echten Prime statt in einen False-Blocked-Zustand.
   - Reauth wird nur noch dann verlangt, wenn der Backend-Status dafuer wirklich einen belegten technischen Grund hat.
   - Wenn der Backend-Tokenspfad lokal valide ist, mappt die Host-UI einen spaeteren Web-SDK-`authentication_error` nicht mehr faelschlich als „kein gueltiges Browser-Playback-Token“, sondern als Browser-SDK-Anmeldeablehnung. Damit unterscheidet die UI sauberer zwischen echtem Token-/Session-Problem und einer vom Browser/SDK abgelehnten Host-Web-Initialisierung.
+
+# 48) Update 2026-04-06 (Status-/Token-Contract finalisiert, Login-/Player-Aliase ergaenzt, Web-Reauth mit show_dialog)
+- Backend Auth Contract:
+  - `beatbrain-backend/src/auth/auth.service.ts` liefert fuer `GET /auth/spotify/status` jetzt zusaetzlich zu den bisherigen Legacy-Feldern einen expliziten Host-Web-Playback-Vertrag:
+    - `state: ready | blocked | unknown`
+    - `needsReauth`
+    - `missingScopes`
+    - `hasRefreshToken`
+    - `accessTokenExpiresAt`
+    - `isPremium`
+    - `reason: MISSING_SCOPES | NO_REFRESH_TOKEN | REFRESH_FAILED | NOT_LOGGED_IN | PREMIUM_REQUIRED | UNKNOWN`
+  - `GET /auth/spotify/token` basiert weiter auf derselben zentralen Funktion wie `/status`, liefert aber jetzt einen expliziten SDK-Token-Vertrag:
+    - `accessToken?`
+    - `expiresIn`
+    - `expiresAt?`
+    - `grantedScopes`
+    - `needsReauth`
+    - `reason`
+    - `missingScopes`
+  - Wichtig:
+    - Wenn Browser-Playback serverseitig blockiert ist, wird fuer `/auth/spotify/token` kein Spotify-User-Access-Token mehr ausgegeben.
+    - Fehlende Scopes werden bei Refresh nicht „weg-normalisiert“; persistierte `grantedScopes` bleiben die Source of Truth, wenn Spotify in der Refresh-Antwort kein `scope` mitsendet.
+- Required Scopes fuer Host-Web Playback:
+  - Der harte Host-Web-Playback-Scope-Check verwendet jetzt:
+    - `streaming`
+    - `user-modify-playback-state`
+    - `user-read-playback-state`
+  - Der eigentliche Login-Scope-String enthaelt weiterhin zusaetzlich:
+    - `user-read-private`
+    - `user-read-email`
+    - `playlist-read-private`
+    - `playlist-read-collaborative`
+    - `user-read-currently-playing`
+    - `app-remote-control`
+- Web Reauth / Login:
+  - `POST /auth/spotify/login` ist jetzt ein duerner Alias auf den bestehenden Start-Flow `POST /auth/spotify/start`, damit alte und neue Client-Pfade denselben OAuth-Start verwenden.
+  - Fuer Web-Spotify-Login setzt der Start-Flow jetzt `show_dialog=true`, damit Scope-Upgrades / Reauth nicht an einer still weiterverwendeten Alt-Session haengen bleiben.
+- Player Endpoint Aliase:
+  - `beatbrain-backend/src/spotify/spotify.controller.ts` akzeptiert fuer die existierenden Player-Kommandos jetzt sowohl `PUT` als auch `POST`:
+    - `/spotify/player/play`
+    - `/spotify/player/transfer`
+  - Die Business-Logik bleibt zentral in denselben Service-Methoden.
+- Frontend SDK-Token-Fetch:
+  - `beatbrain-frontend/src/shared/net/beatbrainApi.ts` liest den erweiterten `/auth/spotify/token`-Vertrag jetzt inkl. `needsReauth`, `reason`, `grantedScopes`, `missingScopes`, `expiresAt`.
+  - `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts` behandelt diesen Vertrag jetzt sauber:
+    - `needsReauth=true` -> Auth-Fehler mit gezieltem Grund
+    - `reason=PREMIUM_REQUIRED` ohne Token -> Account-/Premium-Fehler statt irrefuehrendem „Token fehlt“
+    - `expiresAt` aus dem Backend wird direkt fuer den SDK-Token-Cache verwendet
+- Laufzeit-Verifikation gegen den laufenden Dev-Server:
+  - `POST /auth/spotify/login?client=web` antwortete erfolgreich mit `authorizeUrl` und enthaelt `show_dialog=true`.
+  - `GET /auth/spotify/status` lieferte live:
+    - `state=ready`
+    - `needsReauth=false`
+    - `missingScopes=[]`
+    - `hasRefreshToken=true`
+    - `isPremium=true`
+  - `GET /auth/spotify/token` lieferte live:
+    - Spotify User Access Token
+    - `expiresAt`
+    - `grantedScopes`
+    - `needsReauth=false`
+  - Die aktive Host-Choose-Ansicht unter `beatbrain-frontend/src/host/screens/HostChoosePlaylistScreen.tsx` rendert weiterhin als horizontaler Carousel-Chooser mit `ScrollView horizontal`, Snap-Intervall und Pfeilnavigation; keine Listen-Regression eingefuehrt.
+
+# 49) Update 2026-04-06 (Spotify Callback-Scopes nicht mehr optimistisch hochstufen, Dev-Reauth bewusst erzwingbar)
+- Zusätzlicher Root-Cause fuer Host-Web Playback:
+  - Die Browser-Logs zeigten zuletzt einen klaren Ablauf:
+    - `/auth/spotify/token` liefert erfolgreich einen Spotify User Access Token (`token:fetch:ok`)
+    - die Spotify Web Playback SDK scheitert trotzdem direkt bei `player:connect:start` mit `player:error:authentication_error`
+  - Das spricht nicht fuer einen fehlenden Frontend-Token-Fetch, sondern fuer eine serverseitig zu optimistisch bewertete oder veraltete Spotify-Host-Session.
+- Backend Auth Callback:
+  - `beatbrain-backend/src/auth/auth.service.ts` uebernimmt bei `grant_type=authorization_code` die gewaehrten Scopes jetzt nur noch aus der echten Spotify-Antwort `tokenPayload.scope`.
+  - Falls Spotify im Callback keine `scope`-Liste zurueckliefert, wird dort nicht mehr stillschweigend auf die komplett angefragten `SPOTIFY_AUTH_SCOPES` hochgestuft.
+  - Hintergrund:
+    - Das alte Verhalten konnte einer bestehenden Host-Session implizit `streaming` / Playback-Scopes zuschreiben, obwohl diese Rechte fuer die aktuelle Spotify-Anmeldung nicht belastbar bestaetigt waren.
+    - Dadurch konnte `/auth/spotify/status` spaeter als `ready` erscheinen, waehrend die Browser-SDK beim echten `connect()` mit `authentication_error` ausstieg.
+- Refresh-Verhalten:
+  - Beim Refresh bleibt die bisher bekannte Scope-Liste weiterhin erhalten, wenn Spotify in der Refresh-Antwort kein `scope` mitsendet.
+  - Wichtig:
+    - fehlende Scopes werden durch Refresh nicht nachgeladen
+    - neue Scope-Upgrades entstehen nur durch eine echte erneute Spotify-Autorisierung
+- Dev-Reauth / lokale Session:
+  - Die persistierte Dev-Host-Session liegt lokal in `beatbrain-backend/.dev-host-session.json`.
+  - Wenn diese Datei geloescht wird und das Backend danach neu startet, muss sich der Host beim naechsten App-Start erneut mit Spotify anmelden.
+  - Das ist der saubere Weg, um eine veraltete oder falsch bewertete Dev-Host-Session gezielt zu verwerfen und den Host-Web-Playback-Flow mit einer frischen Spotify-Autorisierung neu zu pruefen.
+
+# 50) Update 2026-04-06 (Host-Web Playback auf Klick-Pfad verlegt, 127.0.0.1 kanonisiert, SDK-Scope-Check clientseitig verhaertet)
+- Neue forensische Erkenntnis nach frischem Re-Login:
+  - Die lokal neu erzeugte Dev-Host-Session enthaelt jetzt nachweislich die relevanten Spotify-Scopes:
+    - `streaming`
+    - `user-read-email`
+    - `user-read-private`
+    - `user-modify-playback-state`
+    - `user-read-playback-state`
+  - Damit war der zuletzt verbleibende Host-Web-Fehler nicht mehr sinnvoll als „fehlende Spotify-Scopes“ zu erklaeren.
+  - Die Browser-Logs zeigten stattdessen:
+    - `token:fetch:ok`
+    - direkt gefolgt von `player:connect:start`
+    - danach `player:error:authentication_error`
+- Abgeleitete Root-Cause:
+  - Der Host-Web-Flow war lokal immer noch zu aggressiv:
+    - `warmHostSpotifyWebPlayback()` hat den Browser-Player bereits im Hintergrund mit `connect()` initialisiert, noch bevor der echte `Quiz starten`-Klick den Prime-Pfad uebernimmt.
+    - Im React-Web-Dev-Modus kann dieser Warm-up-Effekt mehrfach anlaufen.
+    - Gleichzeitig lief der Host laut Benutzer-Screenshot unter `http://localhost:8081`, waehrend Projekt-Setup, Redirect-URI und Spotify-Web-Beispiele konsistent `127.0.0.1` verwenden.
+  - Fuer OAuth + Web Playback SDK ist diese Kombination aus fruehem Hintergrund-Connect plus gemischter Loopback-Origin unnoetig fragil.
+- Frontend Host-Web Playback:
+  - `beatbrain-frontend/src/host/services/spotifyHostPlayback.ts`
+    - Warm-up verbindet den Browser-Player jetzt nicht mehr im Hintergrund.
+    - Warm-up macht nur noch:
+      - aktiven API-Kontext synchronisieren
+      - SDK-Script laden
+      - Spotify User Token vorab holen/pruefen
+      - Player-Instanz einmalig vorbereiten
+    - Der echte `connect()`-Pfad bleibt damit exklusiv dem expliziten Host-Klick auf `Quiz starten` vorbehalten.
+    - `getOAuthToken` liefert bei gueltigem Cache den Spotify User Access Token jetzt sofort/synchron an die SDK, statt den Callback immer erst ueber einen weiteren asynchronen Promise-Umweg zu bedienen.
+    - Die Clientseite prueft zusaetzlich selbst noch einmal die fuer die Web Playback SDK relevanten Scopes, bevor ein Token an die SDK uebergeben wird:
+      - `streaming`
+      - `user-read-email`
+      - `user-read-private`
+      - `user-modify-playback-state`
+      - `user-read-playback-state`
+    - `player:error:authentication_error` loggt jetzt im Dev-Browser auch die aktuelle Origin und die zuletzt bekannten SDK-Scopes, ohne Tokens offenzulegen.
+- Frontend Host-Web Routing:
+  - `beatbrain-frontend/src/shared/config.ts` exportiert jetzt eine Loopback-Kanonisierung fuer Web-URLs.
+  - `beatbrain-frontend/src/host/hooks/useHostController.ts` ersetzt im lokalen Dev-Host `http://localhost:8081/...` automatisch durch `http://127.0.0.1:8081/...`, wenn das Backend ebenfalls auf `127.0.0.1` konfiguriert ist.
+  - Der Host-Spotify-Login baut den Web-Redirect jetzt ebenfalls auf dieser kanonischen Loopback-Origin auf.
+- Backend Scope-Check:
+  - `beatbrain-backend/src/auth/auth.service.ts` richtet den harten Host-Web-Playback-Scope-Check jetzt zusaetzlich auch an den von Spotify selbst fuer die Web Playback SDK dokumentierten User-Scopes aus:
+    - `user-read-email`
+    - `user-read-private`
+  - Damit stimmen Backend-Readiness und frontendseitiger SDK-Check enger mit der offiziellen Spotify-Web-Playback-Doku ueberein.
+- Wirkung:
+  - Keine fruehen Browser-SDK-`connect()`-Versuche mehr vor der echten User-Geste.
+  - Keine gemischte lokale Host-Origin `localhost` vs. `127.0.0.1` mehr im lokalen Host-Web-Flow.
+  - Wenn die SDK jetzt noch `authentication_error` wirft, sehen die Logs klarer, ob trotz frischem Login wirklich eine Origin-/SDK-Anmeldeablehnung und nicht mehr ein Scope-/Session-Irrtum vorliegt.

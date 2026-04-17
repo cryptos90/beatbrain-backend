@@ -17,6 +17,14 @@ export class AuthController {
     });
   }
 
+  @Post('spotify/login')
+  loginSpotifyAuth(
+    @Query('client') client?: 'mobile' | 'web',
+    @Body() body?: { clientType?: 'mobile' | 'web'; redirectOrigin?: string },
+  ) {
+    return this.startSpotifyAuth(client, body);
+  }
+
   @Get('spotify/callback')
   async handleSpotifyCallback(
     @Query('code') code: string,

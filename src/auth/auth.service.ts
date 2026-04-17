@@ -19,12 +19,27 @@ type SpotifyMe = {
   product?: string;
 };
 
+type HostSpotifyStatusReason =
+  | 'MISSING_SCOPES'
+  | 'NO_REFRESH_TOKEN'
+  | 'REFRESH_FAILED'
+  | 'NOT_LOGGED_IN'
+  | 'PREMIUM_REQUIRED'
+  | 'UNKNOWN';
+
 type HostSpotifyStatus = {
+  state?: 'ready' | 'blocked' | 'unknown';
   connected: boolean;
   canUseWebPlayback: boolean | null;
   needsReconnect: boolean;
+  needsReauth?: boolean;
   missingPremium: boolean;
   missingPlaybackScope: boolean;
+  missingScopes?: string[];
+  hasRefreshToken?: boolean;
+  accessTokenExpiresAt?: number;
+  isPremium?: boolean;
+  reason?: HostSpotifyStatusReason;
   scopeStatus: 'granted' | 'missing' | 'unknown';
   webPlaybackStatus: 'ready' | 'blocked' | 'unknown';
   product?: string;
@@ -55,6 +70,8 @@ const AUTH_RESULT_TTL_MS = 60 * 1000;
 const HOST_SPOTIFY_STATUS_CACHE_TTL_MS = 15_000;
 const HOST_WEB_PLAYBACK_REQUIRED_SCOPES = [
   'streaming',
+  'user-read-email',
+  'user-read-private',
   'user-modify-playback-state',
   'user-read-playback-state',
 ];
@@ -575,6 +592,7 @@ export class AuthService {
       code_challenge_method: 'S256',
       code_challenge: codeChallenge,
       scope: SPOTIFY_AUTH_SCOPES.join(' '),
+      ...(clientType === 'web' ? { show_dialog: 'true' } : {}),
     });
 
     return {
@@ -612,10 +630,7 @@ export class AuthService {
     const accessToken = String(tokenPayload.access_token ?? '');
     const refreshToken = String(tokenPayload.refresh_token ?? '');
     const expiresInSeconds = Number(tokenPayload.expires_in ?? 3600);
-    const grantedScopes = this.resolveGrantedScopes(
-      tokenPayload.scope,
-      SPOTIFY_AUTH_SCOPES,
-    );
+    const grantedScopes = this.resolveGrantedScopes(tokenPayload.scope);
 
     if (!accessToken || !refreshToken) {
       throw new UnauthorizedException('Spotify did not return required tokens');
@@ -824,11 +839,18 @@ export class AuthService {
 
   private buildReconnectStatus(message: string): HostSpotifyStatus {
     return {
+      state: 'blocked',
       connected: false,
       canUseWebPlayback: false,
       needsReconnect: true,
+      needsReauth: true,
       missingPremium: false,
       missingPlaybackScope: false,
+      missingScopes: [],
+      hasRefreshToken: Boolean(this.hostSession?.refreshToken),
+      accessTokenExpiresAt: this.hostSession?.accessTokenExpiresAt,
+      isPremium: undefined,
+      reason: this.hostSession?.refreshToken ? 'REFRESH_FAILED' : 'NOT_LOGGED_IN',
       scopeStatus: 'unknown',
       webPlaybackStatus: 'blocked',
       message,
@@ -842,13 +864,30 @@ export class AuthService {
     missingPlaybackScope?: boolean;
     needsReconnect?: boolean;
     scopeStatus?: HostSpotifyStatus['scopeStatus'];
+    missingScopes?: string[];
+    reason?: HostSpotifyStatusReason;
   }): HostSpotifyStatus {
     return {
+      state: 'blocked',
       connected: !input.needsReconnect,
       canUseWebPlayback: false,
       needsReconnect: Boolean(input.needsReconnect),
+      needsReauth: Boolean(input.needsReconnect || input.missingPlaybackScope),
       missingPremium: Boolean(input.missingPremium),
       missingPlaybackScope: Boolean(input.missingPlaybackScope),
+      missingScopes: input.missingScopes ?? [],
+      hasRefreshToken: Boolean(this.hostSession?.refreshToken),
+      accessTokenExpiresAt: this.hostSession?.accessTokenExpiresAt,
+      isPremium: input.product ? input.product === 'premium' : undefined,
+      reason:
+        input.reason ??
+        (input.missingPremium
+          ? 'PREMIUM_REQUIRED'
+          : input.missingPlaybackScope
+            ? 'MISSING_SCOPES'
+            : input.needsReconnect
+              ? 'REFRESH_FAILED'
+              : 'UNKNOWN'),
       scopeStatus: input.scopeStatus ?? 'unknown',
       webPlaybackStatus: 'blocked',
       ...(input.product ? { product: input.product } : {}),
@@ -862,13 +901,22 @@ export class AuthService {
     missingPremium?: boolean;
     missingPlaybackScope?: boolean;
     scopeStatus?: HostSpotifyStatus['scopeStatus'];
+    missingScopes?: string[];
+    reason?: HostSpotifyStatusReason;
   }): HostSpotifyStatus {
     return {
+      state: 'unknown',
       connected: true,
       canUseWebPlayback: null,
       needsReconnect: false,
+      needsReauth: false,
       missingPremium: Boolean(input.missingPremium),
       missingPlaybackScope: Boolean(input.missingPlaybackScope),
+      missingScopes: input.missingScopes ?? [],
+      hasRefreshToken: Boolean(this.hostSession?.refreshToken),
+      accessTokenExpiresAt: this.hostSession?.accessTokenExpiresAt,
+      isPremium: input.product ? input.product === 'premium' : undefined,
+      reason: input.reason ?? 'UNKNOWN',
       scopeStatus: input.scopeStatus ?? 'unknown',
       webPlaybackStatus: 'unknown',
       ...(input.product ? { product: input.product } : {}),
@@ -881,11 +929,18 @@ export class AuthService {
     product?: string;
   }): HostSpotifyStatus {
     return {
+      state: 'ready',
       connected: true,
       canUseWebPlayback: true,
       needsReconnect: false,
+      needsReauth: false,
       missingPremium: false,
       missingPlaybackScope: false,
+      missingScopes: [],
+      hasRefreshToken: Boolean(this.hostSession?.refreshToken),
+      accessTokenExpiresAt: this.hostSession?.accessTokenExpiresAt,
+      isPremium: input.product ? input.product === 'premium' : undefined,
+      reason: undefined,
       scopeStatus: 'granted',
       webPlaybackStatus: 'ready',
       ...(input.product ? { product: input.product } : {}),
@@ -913,6 +968,8 @@ export class AuthService {
     status: HostSpotifyStatus;
     accessToken: string | null;
     expiresIn: number;
+    expiresAt: number | null;
+    grantedScopes: string[];
   }> {
     this.verifyHostJwtOrThrow(authorizationHeader);
 
@@ -923,6 +980,23 @@ export class AuthService {
         ),
         accessToken: null,
         expiresIn: 0,
+        expiresAt: null,
+        grantedScopes: [],
+      };
+    }
+
+    if (!this.hostSession.refreshToken) {
+      return {
+        status: this.buildBlockedStatus({
+          message:
+            'Die Spotify-Verbindung des Hosts kann nicht erneuert werden. Bitte den Host-Browser erneut mit Spotify verbinden.',
+          needsReconnect: true,
+          reason: 'NO_REFRESH_TOKEN',
+        }),
+        accessToken: null,
+        expiresIn: 0,
+        expiresAt: this.hostSession.accessTokenExpiresAt,
+        grantedScopes: this.normalizeGrantedScopes(this.hostSession.grantedScopes),
       };
     }
 
@@ -936,11 +1010,14 @@ export class AuthService {
         ),
         accessToken: null,
         expiresIn: 0,
+        expiresAt: null,
+        grantedScopes: this.normalizeGrantedScopes(this.hostSession.grantedScopes),
       };
     }
 
     const expiresAt = this.hostSession?.accessTokenExpiresAt ?? Date.now();
     const expiresIn = Math.max(1, Math.floor((expiresAt - Date.now()) / 1000));
+    const grantedScopes = this.normalizeGrantedScopes(this.hostSession?.grantedScopes);
 
     let me: SpotifyMe;
     try {
@@ -952,6 +1029,8 @@ export class AuthService {
         ),
         accessToken: null,
         expiresIn: 0,
+        expiresAt: null,
+        grantedScopes,
       };
     }
 
@@ -965,13 +1044,17 @@ export class AuthService {
           product,
           missingPremium: true,
           scopeStatus: 'unknown',
+          reason: 'PREMIUM_REQUIRED',
         }),
         accessToken,
         expiresIn,
+        expiresAt,
+        grantedScopes,
       };
     }
 
     const scopeState = await this.getHostWebPlaybackScopeState();
+    const missingScopes = this.getMissingHostWebPlaybackScopes(scopeState.scopes);
     if (scopeState.status === 'missing') {
       return {
         status: this.buildBlockedStatus({
@@ -979,9 +1062,13 @@ export class AuthService {
           product,
           missingPlaybackScope: true,
           scopeStatus: 'missing',
+          missingScopes,
+          reason: 'MISSING_SCOPES',
         }),
         accessToken,
         expiresIn,
+        expiresAt,
+        grantedScopes,
       };
     }
 
@@ -996,6 +1083,8 @@ export class AuthService {
         status: cachedStatus,
         accessToken,
         expiresIn,
+        expiresAt,
+        grantedScopes,
       };
     }
 
@@ -1007,6 +1096,8 @@ export class AuthService {
         ),
         accessToken: null,
         expiresIn: 0,
+        expiresAt: null,
+        grantedScopes,
       };
     }
 
@@ -1018,12 +1109,17 @@ export class AuthService {
         product,
         missingPlaybackScope: true,
         scopeStatus: scopeState.status === 'unknown' ? 'unknown' : 'missing',
+        missingScopes: scopeState.status === 'unknown' ? [] : missingScopes,
+        reason:
+          scopeState.status === 'unknown' ? 'UNKNOWN' : 'MISSING_SCOPES',
       });
       this.setCachedHostSpotifyStatus(cacheKey, blockedStatus);
       return {
         status: blockedStatus,
         accessToken,
         expiresIn,
+        expiresAt,
+        grantedScopes,
       };
     }
 
@@ -1034,12 +1130,15 @@ export class AuthService {
           'Spotify-Browser-Playback konnte gerade nicht eindeutig bestätigt werden.',
         product,
         scopeStatus: scopeState.status,
+        reason: 'UNKNOWN',
       });
       this.setCachedHostSpotifyStatus(cacheKey, unknownStatus);
       return {
         status: unknownStatus,
         accessToken,
         expiresIn,
+        expiresAt,
+        grantedScopes,
       };
     }
 
@@ -1050,6 +1149,7 @@ export class AuthService {
               'Spotify ist verbunden. Browser-Playback wird beim Quizstart im Browser verifiziert.',
             product,
             scopeStatus: 'unknown',
+            reason: 'UNKNOWN',
           })
         : this.buildReadyStatus({
             message: 'Spotify ist für Browser-Playback bereit.',
@@ -1061,18 +1161,25 @@ export class AuthService {
       status: nextStatus,
       accessToken,
       expiresIn,
+      expiresAt,
+      grantedScopes,
     };
   }
 
   async getSpotifyAccessTokenForSdk(authorizationHeader?: string) {
     const readiness = await this.evaluateHostSpotifyPlayback(authorizationHeader);
-    if (readiness.status.webPlaybackStatus === 'blocked' || !readiness.accessToken) {
-      this.throwForBlockedSpotifyStatus(readiness.status);
-    }
+    const canIssueAccessToken =
+      readiness.status.webPlaybackStatus !== 'blocked' &&
+      Boolean(readiness.accessToken);
 
     return {
-      accessToken: readiness.accessToken,
-      expiresIn: readiness.expiresIn,
+      accessToken: canIssueAccessToken ? readiness.accessToken ?? undefined : undefined,
+      expiresIn: canIssueAccessToken ? readiness.expiresIn : 0,
+      expiresAt: canIssueAccessToken ? readiness.expiresAt ?? undefined : undefined,
+      grantedScopes: readiness.grantedScopes,
+      needsReauth: Boolean(readiness.status.needsReauth),
+      reason: readiness.status.reason,
+      missingScopes: readiness.status.missingScopes ?? [],
     };
   }
 

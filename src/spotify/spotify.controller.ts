@@ -41,6 +41,7 @@ export class SpotifyController {
   }
 
   @Put('player/play')
+  @Post('player/play')
   async playTrackMinimal(
     @Headers('authorization') authorizationHeader: string | undefined,
     @Body() body: { trackUri?: string; deviceId?: string; positionMs?: number },
@@ -55,6 +56,7 @@ export class SpotifyController {
   }
 
   @Put('player/transfer')
+  @Post('player/transfer')
   async transferPlayback(
     @Headers('authorization') authorizationHeader: string | undefined,
     @Body() body: { deviceId?: string; play?: boolean },
